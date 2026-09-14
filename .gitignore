@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Android / Gradle build outputs
+android/android/build/
+android/android/app/build/
+android/android/capacitor-cordova-android-plugins/build/
+android/android/.gradle/
+android/android/local.properties
+android/android/captures/
+*.apk
+*.aab
+
+# IDE
+.idea/
+*.iml
+.DS_Store

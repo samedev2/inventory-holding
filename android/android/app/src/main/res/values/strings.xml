@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Balanco Certo</string>
+    <string name="title_activity_main">Balanco Certo</string>
+    <string name="package_name">com.balancocerto.app</string>
+    <string name="custom_url_scheme">com.balancocerto.app</string>
+</resources>

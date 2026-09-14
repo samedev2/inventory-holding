@@ -1,0 +1,12 @@
+{
+  "name": "balanco-certo-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Balanco Certo - protótipo mobile de inventario e auditoria de estoque",
+  "scripts": {},
+  "dependencies": {
+    "@capacitor/android": "^6.2.2",
+    "@capacitor/cli": "^6.2.2",
+    "@capacitor/core": "^6.2.2"
+  }
+}
