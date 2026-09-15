@@ -8,6 +8,7 @@
 <body>
 <title>Balanço Certo</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
 :root{
   --color-canvas:#f2f3f6;
@@ -412,11 +413,13 @@ var ROLES = {
   supervisor: { label:'Supervisor',         short:'Supervisor', icon:'shield', desc:'Analisa as divergências confirmadas e valida o ajuste que será aplicado ao estoque.' },
   gestor:     { label:'Gestor',             short:'Gestor', icon:'checkcircle', desc:'Acompanha todos os balanços e autoriza o encerramento com o ajuste final de estoque.' }
 };
+var MAX_CONTAGENS = 3;
 function canRole(action, role){
   var m = {
     coletar:['operador','gestor'],
     conferir:['conferente','gestor'],
     validar:['supervisor','gestor'],
+    resolverAlerta:['gestor'],
     autorizar:['gestor'],
     gerenciar:['supervisor','gestor']
   };
@@ -446,6 +449,106 @@ var Auth = {
   signIn: function(){ try{ localStorage.setItem('balanco-certo:auth','1'); }catch(e){} },
   signOut: function(){ try{ localStorage.removeItem('balanco-certo:auth'); }catch(e){} }
 };
+
+/* ---------------- Supabase (multi-empresa, opcional) ----------------
+   Preencha url/anonKey para ligar o modo multi-empresa (login por código
+   da empresa + e-mail/senha reais, dados isolados por empresa no Postgres).
+   Deixe em branco para manter o modo demo local (usuário demo/demo123). */
+var SUPABASE_CONFIG = { url: 'https://kcrezezsiapsnoininjg.supabase.co', anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtjcmV6ZXpzaWFwc25vaW5pbmpnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk0NjkzOTksImV4cCI6MjEwNTA0NTM5OX0.QdVUTHYkqIv9EkQirsuxDIpiBfNxMj7N2IR-CYZP29o' };
+function supabaseConfigured(){ return !!(SUPABASE_CONFIG.url && SUPABASE_CONFIG.anonKey); }
+var USING_SUPABASE = false;
+var SB_STATE = { empresaId: null, empresaCodigo: null, userId: null };
+var sbClient = null;
+function getSbClient(){
+  if(!sbClient && window.supabase && supabaseConfigured()){
+    sbClient = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+  }
+  return sbClient;
+}
+
+var SB_TABLES = { audits:'balancos', items:'itens' };
+var SB_ALIASES = { items: { js2db:{auditId:'balanco_id'}, db2js:{balanco_id:'auditId'} } };
+function toSnakeKey(k){ return k.replace(/[A-Z]/g, function(m){ return '_'+m.toLowerCase(); }); }
+function toCamelKey(k){ return k.replace(/_([a-z0-9])/g, function(_,c){ return c.toUpperCase(); }); }
+function sbKeyToDb(logical,k){ var al=SB_ALIASES[logical]; if(al && al.js2db[k]) return al.js2db[k]; return toSnakeKey(k); }
+function sbKeyFromDb(logical,k){ var al=SB_ALIASES[logical]; if(al && al.db2js[k]) return al.db2js[k]; return toCamelKey(k); }
+function sbRowToDb(logical,obj){ var out={}; Object.keys(obj).forEach(function(k){ out[sbKeyToDb(logical,k)] = obj[k]; }); return out; }
+function sbRowFromDb(logical,row){ var out={}; Object.keys(row).forEach(function(k){ out[sbKeyFromDb(logical,k)] = row[k]; }); return out; }
+
+function createSupabaseDB(client){
+  function tableFor(logical){ return SB_TABLES[logical] || logical; }
+  function snapFromRow(logical, id, row){
+    var data = row ? sbRowFromDb(logical, row) : undefined;
+    return { id:id, exists:!!row, data:function(){ return data; }, metadata:{fromCache:false,hasPendingWrites:false} };
+  }
+  function makeDocRef(path){
+    var seg = path.split('/'), logical = seg[0], id = seg[1], table = tableFor(logical);
+    return {
+      id:id, path:path,
+      get: async function(){
+        var res = await client.from(table).select('*').eq('id', id).maybeSingle();
+        if(res.error) throw res.error;
+        return snapFromRow(logical, id, res.data);
+      },
+      set: async function(data){
+        var payload = sbRowToDb(logical, data);
+        payload.id = id;
+        if(SB_STATE.empresaId) payload.empresa_id = SB_STATE.empresaId;
+        var res = await client.from(table).upsert(payload);
+        if(res.error) throw res.error;
+      },
+      update: async function(data){
+        var res = await client.from(table).update(sbRowToDb(logical, data)).eq('id', id);
+        if(res.error) throw res.error;
+      },
+      delete: async function(){
+        var res = await client.from(table).delete().eq('id', id);
+        if(res.error) throw res.error;
+      },
+      onSnapshot: function(next, onErr){
+        this.get().then(next).catch(function(e){ if(onErr) onErr(e); });
+        return function(){};
+      },
+      collection: function(sub){ return makeCollRef(path+'/'+sub); }
+    };
+  }
+  function makeCollRef(path, wheres, limitN){
+    wheres = wheres||[];
+    var seg = path.split('/'), logical = seg[0], table = tableFor(logical);
+    var ref = {
+      path:path,
+      where: function(f,op,v){ return makeCollRef(path, wheres.concat([[f,op,v]]), limitN); },
+      orderBy: function(){ return ref; },
+      limit: function(n){ return makeCollRef(path, wheres, n); },
+      doc: function(id){ return makeDocRef(path+'/'+(id||uid())); },
+      add: async function(data){ var r = ref.doc(); await r.set(data); return r; },
+      get: async function(){
+        var q = client.from(table).select('*');
+        wheres.forEach(function(w){
+          var col = sbKeyToDb(logical, w[0]);
+          if(w[1]==='==') q = q.eq(col, w[2]);
+          else if(w[1]==='!=') q = q.neq(col, w[2]);
+          else if(w[1]==='<') q = q.lt(col, w[2]);
+          else if(w[1]==='<=') q = q.lte(col, w[2]);
+          else if(w[1]==='>') q = q.gt(col, w[2]);
+          else if(w[1]==='>=') q = q.gte(col, w[2]);
+          else if(w[1]==='in') q = q.in(col, w[2]);
+        });
+        if(limitN) q = q.limit(limitN);
+        var res = await q;
+        if(res.error) throw res.error;
+        var docs = (res.data||[]).map(function(row){ return snapFromRow(logical, row.id, row); });
+        return { docs:docs, size:docs.length, empty:docs.length===0, docChanges:function(){ return []; }, metadata:{fromCache:false,hasPendingWrites:false} };
+      },
+      onSnapshot: function(next, onErr){
+        ref.get().then(next).catch(function(e){ if(onErr) onErr(e); });
+        return function(){};
+      }
+    };
+    return ref;
+  }
+  return { doc:function(p){ return makeDocRef(p); }, collection:function(p){ return makeCollRef(p); } };
+}
 
 /* ---------------- Mock data pool (for the "importar dados" quick action) ---------------- */
 var MOCK_PRODUCTS = [
@@ -549,21 +652,36 @@ function createLocalDB(){
   return { doc:function(p){ return makeDocRef(p); }, collection:function(p){ return makeCollRef(p); } };
 }
 
-/* ---------------- Data layer ---------------- */
+/* ---------------- Data layer ----------------
+   storeReady resolves to whichever backend is active:
+   - Claude Artifact db capability (when embedded there)
+   - Supabase (when SUPABASE_CONFIG is filled in) — resolved only after
+     login succeeds, since writes need to know the logged-in empresaId
+   - localStorage fallback (demo mode, no backend configured) */
 var db = null;
-var storeReady = (async function(){
+var _storeResolve;
+var storeReady = new Promise(function(resolve){ _storeResolve = resolve; });
+function resolveStore(instance){ db = instance; _storeResolve(instance); }
+
+(async function initNonSupabaseStore(){
+  if(supabaseConfigured()) return; // Supabase path resolves later, from finalizeSupabaseLogin()
   try{
     if(window.claude && window.claude.use){
       db = await window.claude.use('db');
     }
   }catch(e){ db = null; }
   if(!db) db = createLocalDB();
-  return db;
+  resolveStore(db);
 })();
+
+function finalizeSupabaseLogin(client){
+  USING_SUPABASE = true;
+  resolveStore(createSupabaseDB(client));
+}
 
 var audits = {};           // id -> data
 var itemsByAudit = {};     // auditId -> { sku -> data }
-var itemsQueue = { pendente:[], divergente:[], conferido:[] };
+var itemsQueue = { pendente:[], divergente:[], conferido:[], alerta_gestor:[] };
 var auditsUnsub = null;
 var itemsUnsub = null;
 var queueUnsub = null;
@@ -618,16 +736,17 @@ function unsubscribeQueue(){ if(queueUnsub){ queueUnsub(); queueUnsub=null; } }
 function auditAggregate(auditId){
   var items = itemsByAudit[auditId] ? Object.values(itemsByAudit[auditId]) : null;
   if(!items) return null;
-  var total = items.length, pendentes=0, divergentes=0, conferidos=0, ok=0, validados=0;
+  var total = items.length, pendentes=0, divergentes=0, conferidos=0, ok=0, validados=0, alertas=0;
   items.forEach(function(it){
     if(it.status==='pendente') pendentes++;
     else if(it.status==='divergente') divergentes++;
     else if(it.status==='conferido') conferidos++;
+    else if(it.status==='alerta_gestor') alertas++;
     else if(it.status==='ok') ok++;
     else if(it.status==='validado') validados++;
   });
   var resolvidos = ok + validados;
-  return { total:total, pendentes:pendentes, divergentes:divergentes, aguardandoValidacao:conferidos, resolvidos:resolvidos, prontoParaAutorizacao: total>0 && resolvidos===total };
+  return { total:total, pendentes:pendentes, divergentes:divergentes, aguardandoValidacao:conferidos, alertasGestor:alertas, resolvidos:resolvidos, prontoParaAutorizacao: total>0 && resolvidos===total };
 }
 
 async function recalcAndPersist(auditId){
@@ -636,7 +755,7 @@ async function recalcAndPersist(auditId){
   var store = await storeReady;
   await store.doc('audits/'+auditId).update({
     totalItens: agg.total, pendentes: agg.pendentes, divergentes: agg.divergentes,
-    aguardandoValidacao: agg.aguardandoValidacao, resolvidos: agg.resolvidos,
+    aguardandoValidacao: agg.aguardandoValidacao, alertasGestor: agg.alertasGestor, resolvidos: agg.resolvidos,
     prontoParaAutorizacao: agg.prontoParaAutorizacao
   });
 }
@@ -648,7 +767,7 @@ function stageOf(audit){
   if(t>0 && audit.resolvidos===t) return 'autorizacao';
   if((audit.pendentes||0)>0) return 'coleta';
   if((audit.divergentes||0)>0) return 'conferencia';
-  if((audit.aguardandoValidacao||0)>0) return 'validacao';
+  if((audit.aguardandoValidacao||0)>0 || (audit.alertasGestor||0)>0) return 'validacao';
   return 'coleta';
 }
 var STAGE_LABEL = { coleta:'Em coleta', conferencia:'Em conferência', validacao:'Em validação', autorizacao:'Aguardando autorização', encerrado:'Encerrado' };
@@ -673,6 +792,8 @@ function parseHash(){
     if(sub==='conferencia') return { name:'conferencia-lista', auditId:auditId };
     if(sub==='validacao' && seg[3]) return { name:'validar-item', auditId:auditId, sku:seg[3] };
     if(sub==='validacao') return { name:'validacao-lista', auditId:auditId };
+    if(sub==='alerta' && seg[3]) return { name:'alerta-item', auditId:auditId, sku:seg[3] };
+    if(sub==='alerta') return { name:'alerta-lista', auditId:auditId };
     if(sub==='autorizar') return { name:'autorizar', auditId:auditId };
     if(sub==='novo-item') return { name:'novo-item', auditId:auditId };
     if(sub==='itens') return { name:'itens-todos', auditId:auditId };
@@ -685,14 +806,14 @@ var NAV_ROOTS = ['home','balancos','fila','perfil'];
 
 function ensureSubscriptions(route){
   subscribeAudits();
-  var needsItems = ['audit-detail','coletar-item','coletar-lista','conferir-item','conferencia-lista','validar-item','validacao-lista','autorizar','novo-item','itens-todos'];
+  var needsItems = ['audit-detail','coletar-item','coletar-lista','conferir-item','conferencia-lista','validar-item','validacao-lista','alerta-lista','alerta-item','autorizar','novo-item','itens-todos'];
   if(needsItems.indexOf(route.name)!==-1 && route.auditId){
     subscribeItemsForAudit(route.auditId);
   } else {
     unsubscribeItems();
   }
   if(route.name==='fila'){
-    var st = profile.papel==='conferente' ? 'divergente' : profile.papel==='supervisor' ? 'conferido' : 'pendente';
+    var st = profile.papel==='conferente' ? 'divergente' : profile.papel==='supervisor' ? 'conferido' : profile.papel==='gestor' ? 'alerta_gestor' : 'pendente';
     subscribeQueue(st);
   } else {
     unsubscribeQueue();
@@ -734,6 +855,8 @@ function updateChrome(route){
       'conferir-item':{eyebrow:'Conferência', title:'Revisar item', back:'balanco/'+route.auditId+'/conferencia'},
       'validacao-lista':{eyebrow:'Validação', title:'Aguardando validação', back:'balanco/'+route.auditId},
       'validar-item':{eyebrow:'Validação', title:'Validar ajuste', back:'balanco/'+route.auditId+'/validacao'},
+      'alerta-lista':{eyebrow:'Alerta', title:'Alerta ao gestor', back:'balanco/'+route.auditId},
+      'alerta-item':{eyebrow:'Alerta', title:'Decisão do gestor', back:'balanco/'+route.auditId+'/alerta'},
       autorizar:{eyebrow:'Autorização', title:'Encerrar balanço', back:'balanco/'+route.auditId},
       'novo-item':{eyebrow:'Balanço', title:'Adicionar item', back:'balanco/'+route.auditId},
       'itens-todos':{eyebrow:'Balanço', title:'Todos os itens', back:'balanco/'+route.auditId}
@@ -767,10 +890,11 @@ function updateChrome(route){
 }
 
 function queueCountForRole(){
-  var st = profile.papel==='conferente' ? 'divergente' : profile.papel==='supervisor' ? 'conferido' : profile.papel==='gestor' ? null : 'pendente';
   if(profile.papel==='gestor'){
-    return Object.values(audits).filter(function(a){ return a.prontoParaAutorizacao && !a.autorizadoEm; }).length || 0;
+    var aguardandoAut = Object.values(audits).filter(function(a){ return a.prontoParaAutorizacao && !a.autorizadoEm; }).length || 0;
+    return aguardandoAut + (itemsQueue.alerta_gestor||[]).length;
   }
+  var st = profile.papel==='conferente' ? 'divergente' : profile.papel==='supervisor' ? 'conferido' : 'pendente';
   return (itemsQueue[st]||[]).length;
 }
 
@@ -778,12 +902,13 @@ function queueCountForRole(){
 function screenHome(){
   var list = Object.values(audits);
   var ativos = list.filter(function(a){ return !a.autorizadoEm; });
-  var totalPendentes=0, totalDivergentes=0, totalAguardandoVal=0, totalAguardandoAut=0;
+  var totalPendentes=0, totalDivergentes=0, totalAguardandoVal=0, totalAguardandoAut=0, totalAlertas=0;
   list.forEach(function(a){
     if(a.autorizadoEm) return;
     totalPendentes += a.pendentes||0;
     totalDivergentes += a.divergentes||0;
     totalAguardandoVal += a.aguardandoValidacao||0;
+    totalAlertas += a.alertasGestor||0;
     if(a.prontoParaAutorizacao) totalAguardandoAut++;
   });
 
@@ -791,6 +916,14 @@ function screenHome(){
   var banner = '<div class="banner">'+ic('shield',18)+'<div>Você está atuando como <strong>'+esc(roleInfo.label)+'</strong>. '+esc(roleInfo.desc)+'</div></div>';
 
   var recentHtml = ativos.slice(0,4).map(auditListItem).join('') || emptyState('package','Nenhum balanço ativo','Toque em Balanços para ver o histórico completo.');
+
+  var gestorBanner = totalAlertas>0 ? (
+    '<div class="alert-banner" data-action="nav" data-route="fila"><span class="ab-icon">'+ic('alert',20)+'</span>'+
+      '<span class="ab-count">'+totalAlertas+'</span>'+
+      '<span class="ab-text">'+(totalAlertas===1?'item chegou a 3 contagens — decisão do gestor':'itens chegaram a 3 contagens — decisão do gestor')+'</span>'+
+      '<span class="ab-chev">'+ic('chevright',18)+'</span>'+
+    '</div>'
+  ) : '';
 
   var alertBanner = totalDivergentes>0 ? (
     '<div class="alert-banner" data-action="nav" data-route="balancos"><span class="ab-icon">'+ic('alert',20)+'</span>'+
@@ -806,13 +939,14 @@ function screenHome(){
   '</div>';
 
   return ''+
+    gestorBanner+
     alertBanner+
     actionGrid+
     '<div class="stat-grid">'+
       statBlock('Em coleta', totalPendentes, 'itens pendentes') +
       statBlock('Divergências', totalDivergentes, 'aguardando conferência') +
       statBlock('Em validação', totalAguardandoVal, 'aguardando supervisor') +
-      statBlock('P/ autorizar', totalAguardandoAut, 'balanços prontos') +
+      statBlock('Alerta gestor', totalAlertas, '3 contagens sem convergir') +
     '</div>'+
     banner+
     '<div class="section-title">Balanços em andamento</div>'+
@@ -903,7 +1037,8 @@ function screenAuditDetail(auditId){
   var rows = [
     {key:'coletar', label:'Itens pendentes', count:a.pendentes||0, icon:'package', sub:'Aguardando contagem', can:'coletar'},
     {key:'conferencia', label:'Divergências', count:a.divergentes||0, icon:'alert', sub:'Contadas com diferença', can:'conferir', ember:true},
-    {key:'validacao', label:'Aguardando validação', count:a.aguardandoValidacao||0, icon:'shield', sub:'Confirmadas pelo conferente', can:'validar'}
+    {key:'validacao', label:'Aguardando validação', count:a.aguardandoValidacao||0, icon:'shield', sub:'Confirmadas pelo conferente', can:'validar'},
+    {key:'alerta', label:'Alerta ao gestor', count:a.alertasGestor||0, icon:'alert', sub:'3 contagens sem convergência', can:'resolverAlerta', ember:true}
   ];
 
   var rowsHtml = rows.map(function(r){
@@ -950,7 +1085,8 @@ function screenAuditDetail(auditId){
 function itemStatusBadge(status){
   var map = {
     pendente:['soft','Pendente'], ok:['soft','Conferido'], divergente:['ember','Divergente'],
-    conferido:['outline','Aguard. validação'], validado:['solid','Validado']
+    conferido:['outline','Aguard. validação'], validado:['solid','Validado'],
+    alerta_gestor:['ember-solid','Alerta gestor']
   };
   var m = map[status] || ['soft', status];
   return '<span class="badge '+m[0]+'">'+m[1]+'</span>';
@@ -1013,9 +1149,16 @@ function screenConferenciaLista(auditId){
 
 function itemCompareCard(it){
   var diff = it.qtdContada - it.qtdSistema;
+  var numero = it.numContagens||1;
+  var historico = (it.contagens||[]).length>1 ? '<div class="note-box"><div class="nb-label">Histórico de contagens</div>'+
+    it.contagens.map(function(c){ return c.numero+'ª contagem: <strong>'+fmtNum(c.valor)+'</strong> '+esc(it.unidade||'un')+' — '+esc(c.por); }).join('<br>')+
+  '</div>' : '';
   return '<div class="card">'+
-    '<div class="li-sub">'+esc(it.sku)+' · '+esc(it.categoria)+'</div>'+
-    '<div style="font-size:17px;font-weight:600;">'+esc(it.descricao)+'</div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">'+
+      '<div class="li-sub">'+esc(it.sku)+' · '+esc(it.categoria)+'</div>'+
+      '<span class="badge '+(numero>=MAX_CONTAGENS?'ember':'soft')+'">Contagem '+numero+' de '+MAX_CONTAGENS+'</span>'+
+    '</div>'+
+    '<div style="font-size:17px;font-weight:600;margin-top:2px;">'+esc(it.descricao)+'</div>'+
     '<div class="li-sub" style="margin-top:4px;">'+ic('building',13)+' '+esc(it.localizacao)+'</div>'+
     '<div class="compare-grid">'+
       '<div class="compare-box"><div class="cb-label">Sistema</div><div class="cb-value">'+fmtNum(it.qtdSistema)+'</div></div>'+
@@ -1025,6 +1168,7 @@ function itemCompareCard(it){
     '<div class="kv-row"><span class="k">Contado por</span><span class="v">'+esc(it.contadoPor)+'</span></div>'+
     '<div class="kv-row"><span class="k">Em</span><span class="v">'+fmtDate(it.contadoEm)+'</span></div>'+
     (it.observacaoContagem ? '<div class="note-box"><div class="nb-label">Observação da contagem</div>'+esc(it.observacaoContagem)+'</div>' : '')+
+    historico+
   '</div>';
 }
 
@@ -1034,11 +1178,14 @@ function screenConferirItem(auditId, sku){
   if(it.status!=='divergente'){
     return itemCompareCard(it) + '<div class="banner" style="margin-top:12px;">'+ic('checkcircle',18)+'<div>Este item já foi conferido.</div></div>';
   }
+  var numero = it.numContagens||1;
+  var podeRecontar = numero < MAX_CONTAGENS;
   return itemCompareCard(it) +
     '<form data-form="conferir-item" data-audit="'+esc(auditId)+'" data-sku="'+esc(sku)+'" style="margin-top:14px;">'+
       '<div class="card">'+field('obs','Observação da conferência','textarea','Ex.: divergência confirmada após recontagem parcial…')+'</div>'+
+      (podeRecontar ? '' : '<div class="banner ember" style="margin-top:12px;">'+ic('alert',18)+'<div>Limite de '+MAX_CONTAGENS+' contagens será atingido na próxima. Se ainda divergir, o item vai automaticamente para o Gestor.</div></div>')+
       '<div class="btn-row" style="margin-top:14px;">'+
-        '<button class="btn outline block" type="submit" data-intent="recontagem">'+ic('rotate',16)+' Recontagem</button>'+
+        (podeRecontar ? '<button class="btn outline block" type="submit" data-intent="recontagem">'+ic('rotate',16)+' Recontagem ('+(numero+1)+'ª)</button>' : '')+
         '<button class="btn primary block" type="submit" data-intent="confirmar">Confirmar divergência</button>'+
       '</div>'+
     '</form>';
@@ -1059,18 +1206,49 @@ function screenValidacaoLista(auditId){
   }).join('');
 }
 
+function screenAlertaLista(auditId){
+  var a = audits[auditId]; if(!a) return auditNotFound();
+  var items = Object.values(itemsByAudit[auditId]||{}).filter(function(i){ return i.status==='alerta_gestor'; });
+  if(!items.length) return emptyState('checkcircle','Nenhum alerta','Nenhum item atingiu 3 contagens sem convergir neste balanço.');
+  var banner = '<div class="banner ember">'+ic('alert',18)+'<div>'+items.length+' item(ns) atingiram '+MAX_CONTAGENS+' contagens sem convergir com o sistema. É necessária a decisão do <strong>Gestor</strong>.</div></div>';
+  return banner + items.map(function(it){
+    var diff = it.qtdContada - it.qtdSistema;
+    return '<div class="list-item" data-action="nav" data-route="balanco/'+esc(auditId)+'/alerta/'+esc(it.sku)+'">'+
+      '<div class="icon-wrap" style="color:var(--color-ember);">'+ic('alert',18)+'</div>'+
+      '<div class="li-body"><div class="li-title">'+esc(it.descricao)+'</div><div class="li-sub">'+esc(it.sku)+' · 3ª contagem: '+fmtNum(it.qtdContada)+'</div></div>'+
+      '<div class="li-trail"><span class="li-qty danger">'+(diff>0?'+':'')+fmtNum(diff)+'</span>'+ic('chevright',16)+'</div>'+
+    '</div>';
+  }).join('');
+}
+
 function screenValidarItem(auditId, sku){
   var it = (itemsByAudit[auditId]||{})[sku];
-  if(!it) return emptyState('alert','Item não encontrado','Volte para a lista de validação.');
+  if(!it) return emptyState('alert','Item não encontrado','Volte para a lista.');
   var extra = it.observacaoConferencia ? '<div class="note-box"><div class="nb-label">Observação do conferente</div>'+esc(it.observacaoConferencia)+' — '+esc(it.conferidoPor)+'</div>' : '';
+
+  if(it.status==='alerta_gestor'){
+    var alertBanner = '<div class="banner ember" style="margin-top:12px;">'+ic('alert',18)+'<div>Este item atingiu <strong>'+MAX_CONTAGENS+' contagens</strong> sem convergir com o sistema. Somente o <strong>Gestor</strong> pode registrar a decisão final.</div></div>';
+    if(!canRole('resolverAlerta', profile.papel)){
+      return itemCompareCard(it)+extra+alertBanner;
+    }
+    return itemCompareCard(it)+extra+alertBanner+
+      '<form data-form="validar-item" data-audit="'+esc(auditId)+'" data-sku="'+esc(sku)+'" style="margin-top:14px;">'+
+        '<div class="card">'+field('obs','Observação da decisão','textarea','Ex.: ajuste aprovado após 3 contagens; quebra ou furto registrado.')+'</div>'+
+        '<button class="btn primary block" type="submit" data-intent="validar" style="margin-top:14px;">'+ic('shield',16)+' Registrar decisão final</button>'+
+      '</form>';
+  }
+
   if(it.status!=='conferido'){
     return itemCompareCard(it)+extra + '<div class="banner" style="margin-top:12px;">'+ic('checkcircle',18)+'<div>Este item já foi validado.</div></div>';
   }
+  var numero = it.numContagens||1;
+  var podeRecontar = numero < MAX_CONTAGENS;
   return itemCompareCard(it)+extra +
     '<form data-form="validar-item" data-audit="'+esc(auditId)+'" data-sku="'+esc(sku)+'" style="margin-top:14px;">'+
       '<div class="card">'+field('obs','Observação da validação','textarea','Ex.: ajuste aprovado por baixa de avaria, perda ou furto…')+'</div>'+
+      (podeRecontar ? '' : '<div class="banner ember" style="margin-top:12px;">'+ic('alert',18)+'<div>Limite de '+MAX_CONTAGENS+' contagens será atingido na próxima. Se ainda divergir, vai automaticamente para o Gestor.</div></div>')+
       '<div class="btn-row" style="margin-top:14px;">'+
-        '<button class="btn outline block" type="submit" data-intent="recontagem">'+ic('rotate',16)+' Recontagem</button>'+
+        (podeRecontar ? '<button class="btn outline block" type="submit" data-intent="recontagem">'+ic('rotate',16)+' Recontagem ('+(numero+1)+'ª)</button>' : '')+
         '<button class="btn primary block" type="submit" data-intent="validar">Validar ajuste</button>'+
       '</div>'+
     '</form>';
@@ -1141,9 +1319,20 @@ function screenItensTodos(auditId){
 function screenFila(){
   var role = profile.papel;
   if(role==='gestor'){
+    var alertas = itemsQueue.alerta_gestor||[];
     var list = Object.values(audits).filter(function(a){ return a.prontoParaAutorizacao && !a.autorizadoEm; });
-    if(!list.length) return emptyState('checkcircle','Fila vazia','Nenhum balanço aguardando autorização no momento.');
-    return '<div class="section-title">Aguardando autorização</div>' + list.map(auditListItem).join('');
+    if(!alertas.length && !list.length) return emptyState('checkcircle','Fila vazia','Nenhum balanço aguardando autorização nem alerta de contagem no momento.');
+    var alertasHtml = !alertas.length ? '' : '<div class="section-title">Alertas de contagem (3ª contagem)</div>' + alertas.map(function(it){
+      var a = audits[it.auditId];
+      var diff = it.qtdContada - it.qtdSistema;
+      return '<div class="list-item" data-action="nav" data-route="balanco/'+esc(it.auditId)+'/alerta/'+esc(it.sku)+'">'+
+        '<div class="icon-wrap" style="color:var(--color-ember);">'+ic('alert',18)+'</div>'+
+        '<div class="li-body"><div class="li-title">'+esc(it.descricao)+'</div><div class="li-sub">'+esc(a?a.nome:'')+' · '+esc(it.sku)+'</div></div>'+
+        '<div class="li-trail"><span class="li-qty danger">'+(diff>0?'+':'')+fmtNum(diff)+'</span>'+ic('chevright',16)+'</div>'+
+      '</div>';
+    }).join('');
+    var autorizarHtml = !list.length ? '' : '<div class="section-title">Aguardando autorização</div>' + list.map(auditListItem).join('');
+    return alertasHtml + autorizarHtml;
   }
   var st = role==='conferente' ? 'divergente' : role==='supervisor' ? 'conferido' : 'pendente';
   var routeSeg = role==='conferente' ? 'conferencia' : role==='supervisor' ? 'validacao' : 'coletar';
@@ -1160,29 +1349,43 @@ function screenFila(){
 }
 
 function screenPerfil(){
-  var roleCards = Object.keys(ROLES).map(function(k){
-    var r = ROLES[k], sel = profile.papel===k;
-    return '<div class="role-card'+(sel?' selected':'')+'" data-action="setRole" data-role="'+k+'">'+
-      '<div class="rc-icon">'+ic(r.icon,18)+'</div>'+
-      '<div><div class="rc-title">'+r.label+'</div><div class="rc-desc">'+r.desc+'</div></div>'+
-      (sel? '<span class="rc-check">'+ic('checkcircle',20)+'</span>' : '')+
-    '</div>';
-  }).join('');
+  var roleSection;
+  if(USING_SUPABASE){
+    var r = ROLES[profile.papel] || {label:profile.papel, icon:'user', desc:''};
+    roleSection = ''+
+      '<div class="section-title">Papel na empresa</div>'+
+      '<div class="role-card selected" style="cursor:default;">'+
+        '<div class="rc-icon">'+ic(r.icon,18)+'</div>'+
+        '<div><div class="rc-title">'+esc(r.label)+'</div><div class="rc-desc">'+esc(r.desc)+'</div></div>'+
+      '</div>'+
+      '<div class="banner">'+ic('shield',18)+'<div>O papel é definido pelo administrador da empresa ('+esc(SB_STATE.empresaCodigo||'')+') e não pode ser trocado por aqui.</div></div>';
+  } else {
+    var roleCards = Object.keys(ROLES).map(function(k){
+      var rk = ROLES[k], sel = profile.papel===k;
+      return '<div class="role-card'+(sel?' selected':'')+'" data-action="setRole" data-role="'+k+'">'+
+        '<div class="rc-icon">'+ic(rk.icon,18)+'</div>'+
+        '<div><div class="rc-title">'+rk.label+'</div><div class="rc-desc">'+rk.desc+'</div></div>'+
+        (sel? '<span class="rc-check">'+ic('checkcircle',20)+'</span>' : '')+
+      '</div>';
+    }).join('');
+    roleSection = ''+
+      '<div class="section-title">Modo de visualização</div>'+
+      '<div class="banner">'+ic('shield',18)+'<div>Este protótipo permite alternar de papel para testar todo o fluxo de coleta, conferência, validação e autorização em um único aparelho.</div></div>'+
+      roleCards;
+  }
 
   return ''+
     '<div class="card">'+
       '<div style="display:flex;align-items:center;gap:14px;">'+
         '<div class="avatar" style="width:46px;height:46px;font-size:16px;">'+esc(initials(profile.nome))+'</div>'+
-        '<div><div style="font-weight:600;font-size:15px;">'+esc(profile.nome)+'</div><div class="li-sub">'+ROLES[profile.papel].label+'</div></div>'+
+        '<div><div style="font-weight:600;font-size:15px;">'+esc(profile.nome)+'</div><div class="li-sub">'+esc((ROLES[profile.papel]||{}).label||profile.papel)+'</div></div>'+
       '</div>'+
       '<form data-form="perfil" class="card-footer">'+
         field('nome','Seu nome','text','Seu nome', true, profile.nome)+
         '<button class="btn secondary block" type="submit">Salvar nome</button>'+
       '</form>'+
     '</div>'+
-    '<div class="section-title">Modo de visualização</div>'+
-    '<div class="banner">'+ic('shield',18)+'<div>Este protótipo permite alternar de papel para testar todo o fluxo de coleta, conferência, validação e autorização em um único aparelho.</div></div>'+
-    roleCards+
+    roleSection+
     '<button class="btn outline block" data-action="logout" style="margin-top:6px;">Sair da conta</button>';
 }
 
@@ -1228,14 +1431,17 @@ var Forms = {
     var auditId = form.dataset.audit, sku = form.dataset.sku;
     var it = (itemsByAudit[auditId]||{})[sku]; if(!it) return;
     var qtd = Number(fd.get('qtd'));
-    var status = qtd === it.qtdSistema ? 'ok' : 'divergente';
+    var numero = (it.numContagens||0) + 1;
+    var bateu = qtd === it.qtdSistema;
+    var status = bateu ? 'ok' : (numero >= MAX_CONTAGENS ? 'alerta_gestor' : 'divergente');
+    var historico = (it.contagens||[]).concat([{ numero: numero, valor: qtd, por: profile.nome, em: new Date().toISOString() }]);
     var store = await storeReady;
     await store.doc('items/'+it.id).update({
       qtdContada: qtd, status: status, contadoPor: profile.nome, contadoEm: new Date().toISOString(),
-      observacaoContagem: fd.get('obs')||''
+      observacaoContagem: fd.get('obs')||'', numContagens: numero, contagens: historico
     });
     await recalcAndPersist(auditId);
-    toast(status==='ok' ? 'Contagem confere com o sistema.' : 'Divergência registrada para conferência.');
+    toast(bateu ? 'Contagem confere com o sistema.' : (status==='alerta_gestor' ? 'Limite de '+MAX_CONTAGENS+' contagens atingido — alerta enviado ao gestor.' : (numero+'ª contagem registrada com divergência.')));
     go('balanco/'+auditId+'/coletar');
   },
   'conferir-item': async function(form, submitter){
@@ -1246,7 +1452,7 @@ var Forms = {
     var store = await storeReady;
     if(intent==='recontagem'){
       await store.doc('items/'+it.id).update({ qtdContada:null, status:'pendente', observacaoContagem:'', observacaoConferencia: fd.get('obs')||'' });
-      toast('Recontagem solicitada.');
+      toast((( it.numContagens||0)+1)+'ª contagem solicitada.');
     } else {
       await store.doc('items/'+it.id).update({ status:'conferido', conferidoPor: profile.nome, conferidoEm: new Date().toISOString(), observacaoConferencia: fd.get('obs')||'' });
       toast('Divergência confirmada, aguardando validação.');
@@ -1259,15 +1465,17 @@ var Forms = {
     var it = (itemsByAudit[auditId]||{})[sku]; if(!it) return;
     var fd = new FormData(form);
     var intent = submitter && submitter.dataset.intent;
+    var wasAlerta = it.status==='alerta_gestor';
     var store = await storeReady;
     if(intent==='recontagem'){
       await store.doc('items/'+it.id).update({ qtdContada:null, status:'pendente', observacaoContagem:'', observacaoConferencia:'', observacaoValidacao: fd.get('obs')||'' });
-      toast('Recontagem solicitada.');
+      toast((( it.numContagens||0)+1)+'ª contagem solicitada.');
     } else {
       await store.doc('items/'+it.id).update({ status:'validado', validadoPor: profile.nome, validadoEm: new Date().toISOString(), observacaoValidacao: fd.get('obs')||'' });
-      toast('Ajuste validado.');
+      toast(wasAlerta ? 'Decisão do gestor registrada.' : 'Ajuste validado.');
     }
     await recalcAndPersist(auditId);
+    if(wasAlerta){ go('balanco/'+auditId+'/alerta'); return; }
     go('balanco/'+auditId+'/validacao');
   },
   'autorizar': async function(form){
@@ -1284,29 +1492,73 @@ var Forms = {
     var fd = new FormData(form);
     profile.nome = String(fd.get('nome')||'Você').trim() || 'Você';
     Profile.set(profile);
+    if(USING_SUPABASE && sbClient && SB_STATE.userId){
+      try{ await sbClient.from('profiles').update({ nome: profile.nome }).eq('id', SB_STATE.userId); }catch(e){ console.error(e); }
+    }
     toast('Perfil atualizado.');
     render();
   },
   'login': async function(form){
     var fd = new FormData(form);
-    var usuario = String(fd.get('usuario')||'').trim();
-    var senha = String(fd.get('senha')||'');
     var errEl = document.getElementById('login-error');
-    if(usuario.toLowerCase()!==DEMO_USER || senha!==DEMO_PASS){
-      if(errEl){ errEl.hidden = false; }
+    function showErr(msg){ if(errEl){ var m=errEl.querySelector('.err-msg'); if(m) m.textContent = msg; errEl.hidden = false; } }
+
+    if(!supabaseConfigured()){
+      var usuario = String(fd.get('usuario')||'').trim();
+      var senha = String(fd.get('senha')||'');
+      if(usuario.toLowerCase()!==DEMO_USER || senha!==DEMO_PASS){
+        showErr('Usuário ou senha incorretos. Confira os dados de demonstração acima.');
+        return;
+      }
+      if(errEl) errEl.hidden = true;
+      Auth.signIn();
+      enterApp(true);
       return;
     }
-    if(errEl) errEl.hidden = true;
-    Auth.signIn();
-    enterApp(true);
+
+    var codigo = String(fd.get('codigo')||'').trim().toUpperCase();
+    var email = String(fd.get('email')||'').trim();
+    var senha2 = String(fd.get('senha')||'');
+    var client = getSbClient();
+    if(!client){ showErr('Não foi possível conectar ao Supabase.'); return; }
+    try{
+      var empRes = await client.from('empresas').select('id,codigo,nome').eq('codigo', codigo).maybeSingle();
+      if(empRes.error || !empRes.data){ showErr('Código de empresa não encontrado.'); return; }
+      var authRes = await client.auth.signInWithPassword({ email: email, password: senha2 });
+      if(authRes.error){ showErr('E-mail ou senha incorretos.'); return; }
+      var ok = await loadSupabaseProfile(client, authRes.data.user, empRes.data);
+      if(!ok){ await client.auth.signOut(); showErr('Este usuário não pertence à empresa informada.'); return; }
+      if(errEl) errEl.hidden = true;
+      enterApp(true);
+    }catch(err){
+      console.error(err);
+      showErr('Não foi possível entrar. Tente novamente.');
+    }
   }
 };
+
+async function loadSupabaseProfile(client, user, empresa){
+  var res = await client.from('profiles').select('empresa_id,nome,papel').eq('id', user.id).maybeSingle();
+  if(res.error || !res.data || res.data.empresa_id !== empresa.id) return false;
+  SB_STATE.empresaId = empresa.id;
+  SB_STATE.empresaCodigo = empresa.codigo;
+  SB_STATE.userId = user.id;
+  profile.nome = res.data.nome;
+  profile.papel = res.data.papel;
+  Profile.set(profile);
+  finalizeSupabaseLogin(client);
+  return true;
+}
 
 var Actions = {
   nav: function(ds){ go(ds.route); },
   filterBalancos: function(ds){ screenBalancos._filter = ds.filter; render(); },
-  setRole: function(ds){ profile.papel = ds.role; Profile.set(profile); render(); },
+  setRole: function(ds){ if(USING_SUPABASE) return; profile.papel = ds.role; Profile.set(profile); render(); },
   logout: function(){
+    if(USING_SUPABASE && sbClient){
+      sbClient.auth.signOut().finally(function(){ location.reload(); });
+      return;
+    }
     Auth.signOut();
     location.hash = '';
     showLogin();
@@ -1393,6 +1645,8 @@ var SCREENS = {
   'conferir-item': function(rt){ return screenConferirItem(rt.auditId, rt.sku); },
   'validacao-lista': function(rt){ return screenValidacaoLista(rt.auditId); },
   'validar-item': function(rt){ return screenValidarItem(rt.auditId, rt.sku); },
+  'alerta-lista': function(rt){ return screenAlertaLista(rt.auditId); },
+  'alerta-item': function(rt){ return screenValidarItem(rt.auditId, rt.sku); },
   'autorizar': function(rt){ return screenAutorizar(rt.auditId); },
   'novo-item': function(rt){ return screenNovoItem(rt.auditId); },
   'itens-todos': function(rt){ return screenItensTodos(rt.auditId); }
@@ -1411,14 +1665,29 @@ function render(){
 /* ---------------- Login screen & boot ---------------- */
 function renderLoginScreen(){
   var el = document.getElementById('login-screen');
-  el.innerHTML =
-    '<div class="login-brand">'+
+  var brand = '<div class="login-brand">'+
       '<div class="login-mark">'+ic('shield',30)+'</div>'+
       '<div class="login-name">Balanço Certo</div>'+
       '<div class="login-tag">Coleta, conferência, validação e autorização de inventários</div>'+
-    '</div>'+
+    '</div>';
+
+  if(supabaseConfigured()){
+    el.innerHTML = brand+
+      '<div class="login-error" id="login-error" hidden>'+ic('alert',16)+'<div class="err-msg">Não foi possível entrar.</div></div>'+
+      '<form data-form="login">'+
+        '<div class="card">'+
+          field('codigo','Código da empresa','text','Ex.: ACME01', true)+
+          field('email','E-mail','email','voce@empresa.com', true)+
+          field('senha','Senha','password','••••••••', true)+
+        '</div>'+
+        '<button class="btn primary block" type="submit" style="margin-top:16px;">Entrar</button>'+
+      '</form>';
+    return;
+  }
+
+  el.innerHTML = brand+
     '<div class="login-hint">'+ic('lock',16)+'<div>Acesso de demonstração: usuário <b>'+DEMO_USER+'</b> · senha <b>'+DEMO_PASS+'</b></div></div>'+
-    '<div class="login-error" id="login-error" hidden>'+ic('alert',16)+'<div>Usuário ou senha incorretos. Confira os dados de demonstração acima.</div></div>'+
+    '<div class="login-error" id="login-error" hidden>'+ic('alert',16)+'<div class="err-msg">Usuário ou senha incorretos. Confira os dados de demonstração acima.</div></div>'+
     '<form data-form="login">'+
       '<div class="card">'+
         field('usuario','Usuário','text','demo', true, DEMO_USER)+
@@ -1460,16 +1729,52 @@ function enterApp(withFade){
   }
 }
 
-if(Auth.isIn()){
+function isLoggedIn(){
+  if(supabaseConfigured()) return USING_SUPABASE && !!SB_STATE.empresaId;
+  return Auth.isIn();
+}
+
+function enterAppNoFade(){
   document.getElementById('login-shell').hidden = true;
   document.getElementById('app').hidden = false;
   render();
-} else {
-  showLogin();
 }
 
-storeReady.then(function(){ if(Auth.isIn()) render(); });
-window.addEventListener('hashchange', function(){ if(Auth.isIn()) render(); });
+async function boot(){
+  if(supabaseConfigured()){
+    var client = getSbClient();
+    if(client){
+      try{
+        var sRes = await client.auth.getSession();
+        var session = sRes.data && sRes.data.session;
+        if(session && session.user){
+          var profRes = await client.from('profiles').select('empresa_id,nome,papel').eq('id', session.user.id).maybeSingle();
+          if(profRes.data){
+            var empRes = await client.from('empresas').select('id,codigo').eq('id', profRes.data.empresa_id).maybeSingle();
+            if(empRes.data){
+              SB_STATE.empresaId = empRes.data.id;
+              SB_STATE.empresaCodigo = empRes.data.codigo;
+              SB_STATE.userId = session.user.id;
+              profile.nome = profRes.data.nome;
+              profile.papel = profRes.data.papel;
+              Profile.set(profile);
+              finalizeSupabaseLogin(client);
+              enterAppNoFade();
+              return;
+            }
+          }
+        }
+      }catch(e){ console.error(e); }
+    }
+    showLogin();
+    return;
+  }
+  if(Auth.isIn()){ enterAppNoFade(); } else { showLogin(); }
+}
+boot();
+
+storeReady.then(function(){ if(isLoggedIn()) render(); });
+window.addEventListener('hashchange', function(){ if(isLoggedIn()) render(); });
 </script>
 
 </body>

@@ -446,7 +446,7 @@ var Auth = {
    Preencha url/anonKey para ligar o modo multi-empresa (login por código
    da empresa + e-mail/senha reais, dados isolados por empresa no Postgres).
    Deixe em branco para manter o modo demo local (usuário demo/demo123). */
-var SUPABASE_CONFIG = { url: '', anonKey: '' };
+var SUPABASE_CONFIG = { url: 'https://kcrezezsiapsnoininjg.supabase.co', anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtjcmV6ZXpzaWFwc25vaW5pbmpnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk0NjkzOTksImV4cCI6MjEwNTA0NTM5OX0.QdVUTHYkqIv9EkQirsuxDIpiBfNxMj7N2IR-CYZP29o' };
 function supabaseConfigured(){ return !!(SUPABASE_CONFIG.url && SUPABASE_CONFIG.anonKey); }
 var USING_SUPABASE = false;
 var SB_STATE = { empresaId: null, empresaCodigo: null, userId: null };
