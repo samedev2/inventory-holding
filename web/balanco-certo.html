@@ -436,6 +436,17 @@ var profile = Profile.get();
 /* ---------------- Auth (local demo gate) ---------------- */
 var DEMO_USER = 'demo';
 var DEMO_PASS = 'demo123';
+
+/* Contas de demonstração do modo Supabase — ver supabase/schema.sql
+   e o passo a passo de provisionamento no README para recriá-las. */
+var DEMO_EMPRESA = { codigo: 'DEMO01', senha: 'Teste@123' };
+var DEMO_ACCOUNTS = [
+  { papel:'gestor',     email:'gestor@demo01.com',     label:'Gestor' },
+  { papel:'supervisor', email:'supervisor@demo01.com', label:'Supervisor' },
+  { papel:'conferente', email:'conferente@demo01.com', label:'Conferente' },
+  { papel:'operador',   email:'operador@demo01.com',   label:'Operador' }
+];
+
 var Auth = {
   isIn: function(){ try{ return localStorage.getItem('balanco-certo:auth')==='1'; }catch(e){ return false; } },
   signIn: function(){ try{ localStorage.setItem('balanco-certo:auth','1'); }catch(e){} },
@@ -1545,6 +1556,13 @@ async function loadSupabaseProfile(client, user, empresa){
 var Actions = {
   nav: function(ds){ go(ds.route); },
   filterBalancos: function(ds){ screenBalancos._filter = ds.filter; render(); },
+  fillDemo: function(ds){
+    var emailEl = document.getElementById('f-email');
+    if(emailEl) emailEl.value = ds.email;
+    document.querySelectorAll('.chip[data-action="fillDemo"]').forEach(function(c){
+      c.classList.toggle('active', c.dataset.email===ds.email);
+    });
+  },
   setRole: function(ds){ if(USING_SUPABASE) return; profile.papel = ds.role; Profile.set(profile); render(); },
   logout: function(){
     if(USING_SUPABASE && sbClient){
@@ -1664,13 +1682,18 @@ function renderLoginScreen(){
     '</div>';
 
   if(supabaseConfigured()){
+    var demoChips = DEMO_ACCOUNTS.map(function(a,i){
+      return '<button type="button" class="chip'+(i===0?' active':'')+'" data-action="fillDemo" data-email="'+a.email+'">'+a.label+'</button>';
+    }).join('');
     el.innerHTML = brand+
+      '<div class="login-hint">'+ic('lock',16)+'<div>Contas de demonstração — empresa <b>'+DEMO_EMPRESA.codigo+'</b>, senha <b>'+DEMO_EMPRESA.senha+'</b> para todas. Toque num papel para preencher o e-mail.</div></div>'+
+      '<div class="chip-row" style="margin-bottom:2px;">'+demoChips+'</div>'+
       '<div class="login-error" id="login-error" hidden>'+ic('alert',16)+'<div class="err-msg">Não foi possível entrar.</div></div>'+
       '<form data-form="login">'+
         '<div class="card">'+
-          field('codigo','Código da empresa','text','Ex.: ACME01', true)+
-          field('email','E-mail','email','voce@empresa.com', true)+
-          field('senha','Senha','password','••••••••', true)+
+          field('codigo','Código da empresa','text','Ex.: ACME01', true, DEMO_EMPRESA.codigo)+
+          field('email','E-mail','email','voce@empresa.com', true, DEMO_ACCOUNTS[0].email)+
+          field('senha','Senha','password','••••••••', true, DEMO_EMPRESA.senha)+
         '</div>'+
         '<button class="btn primary block" type="submit" style="margin-top:16px;">Entrar</button>'+
       '</form>';
