@@ -538,33 +538,89 @@ function createSupabaseDB(client){
     var data = row ? sbRowFromDb(logical, row) : undefined;
     return { id:id, exists:!!row, data:function(){ return data; }, metadata:{fromCache:false,hasPendingWrites:false} };
   }
+
+  /* Every viewer's screen stays live: each onSnapshot() registers a
+     listener here; a write refreshes matching listeners immediately
+     (so the acting user always sees their own change reflected right
+     away), and a best-effort Realtime channel per table refreshes
+     everyone else too when the table is in the supabase_realtime
+     publication (see supabase/schema.sql). If Realtime isn't enabled
+     the app still works — other viewers just see the change next time
+     they navigate or reload, same as the immediate-refresh path. */
+  var listeners = new Set();
+  var realtimeChannels = {};
+
+  function ensureRealtime(table){
+    if(realtimeChannels[table]) return;
+    try{
+      var channel = client.channel('rt-'+table)
+        .on('postgres_changes', { event:'*', schema:'public', table:table }, function(){ refreshTable(table); })
+        .subscribe();
+      realtimeChannels[table] = channel;
+    }catch(e){ /* Realtime not available/enabled — manual refresh below still covers our own writes */ }
+  }
+
+  function refreshTable(table){
+    listeners.forEach(function(l){
+      if(l.table !== table) return;
+      var p = l.kind==='doc' ? fetchDoc(l.logical, l.table, l.id) : fetchQuery(l.logical, l.table, l.wheres, l.limitN);
+      p.then(l.cb).catch(function(e){ if(l.onErr) l.onErr(e); });
+    });
+  }
+
+  async function fetchDoc(logical, table, id){
+    var res = await client.from(table).select('*').eq('id', id).maybeSingle();
+    if(res.error) throw res.error;
+    return snapFromRow(logical, id, res.data);
+  }
+  async function fetchQuery(logical, table, wheres, limitN){
+    var q = client.from(table).select('*');
+    wheres.forEach(function(w){
+      var col = sbKeyToDb(logical, w[0]);
+      if(w[1]==='==') q = q.eq(col, w[2]);
+      else if(w[1]==='!=') q = q.neq(col, w[2]);
+      else if(w[1]==='<') q = q.lt(col, w[2]);
+      else if(w[1]==='<=') q = q.lte(col, w[2]);
+      else if(w[1]==='>') q = q.gt(col, w[2]);
+      else if(w[1]==='>=') q = q.gte(col, w[2]);
+      else if(w[1]==='in') q = q.in(col, w[2]);
+    });
+    if(limitN) q = q.limit(limitN);
+    var res = await q;
+    if(res.error) throw res.error;
+    var docs = (res.data||[]).map(function(row){ return snapFromRow(logical, row.id, row); });
+    return { docs:docs, size:docs.length, empty:docs.length===0, docChanges:function(){ return []; }, metadata:{fromCache:false,hasPendingWrites:false} };
+  }
+
   function makeDocRef(path){
     var seg = path.split('/'), logical = seg[0], id = seg[1], table = tableFor(logical);
     return {
       id:id, path:path,
-      get: async function(){
-        var res = await client.from(table).select('*').eq('id', id).maybeSingle();
-        if(res.error) throw res.error;
-        return snapFromRow(logical, id, res.data);
-      },
+      get: function(){ return fetchDoc(logical, table, id); },
       set: async function(data){
         var payload = sbRowToDb(logical, data);
         payload.id = id;
         if(SB_STATE.empresaId) payload.empresa_id = SB_STATE.empresaId;
         var res = await client.from(table).upsert(payload);
         if(res.error) throw res.error;
+        refreshTable(table);
       },
       update: async function(data){
         var res = await client.from(table).update(sbRowToDb(logical, data)).eq('id', id);
         if(res.error) throw res.error;
+        refreshTable(table);
       },
       delete: async function(){
         var res = await client.from(table).delete().eq('id', id);
         if(res.error) throw res.error;
+        refreshTable(table);
       },
       onSnapshot: function(next, onErr){
-        this.get().then(next).catch(function(e){ if(onErr) onErr(e); });
-        return function(){};
+        var l = { kind:'doc', table:table, id:id, logical:logical, cb:next, onErr:onErr };
+        listeners.add(l);
+        ensureRealtime(table);
+        fetchDoc(logical, table, id).then(next).catch(function(e){ if(onErr) onErr(e); });
+        return function(){ listeners.delete(l); };
       },
       collection: function(sub){ return makeCollRef(path+'/'+sub); }
     };
@@ -579,27 +635,13 @@ function createSupabaseDB(client){
       limit: function(n){ return makeCollRef(path, wheres, n); },
       doc: function(id){ return makeDocRef(path+'/'+(id||uid())); },
       add: async function(data){ var r = ref.doc(); await r.set(data); return r; },
-      get: async function(){
-        var q = client.from(table).select('*');
-        wheres.forEach(function(w){
-          var col = sbKeyToDb(logical, w[0]);
-          if(w[1]==='==') q = q.eq(col, w[2]);
-          else if(w[1]==='!=') q = q.neq(col, w[2]);
-          else if(w[1]==='<') q = q.lt(col, w[2]);
-          else if(w[1]==='<=') q = q.lte(col, w[2]);
-          else if(w[1]==='>') q = q.gt(col, w[2]);
-          else if(w[1]==='>=') q = q.gte(col, w[2]);
-          else if(w[1]==='in') q = q.in(col, w[2]);
-        });
-        if(limitN) q = q.limit(limitN);
-        var res = await q;
-        if(res.error) throw res.error;
-        var docs = (res.data||[]).map(function(row){ return snapFromRow(logical, row.id, row); });
-        return { docs:docs, size:docs.length, empty:docs.length===0, docChanges:function(){ return []; }, metadata:{fromCache:false,hasPendingWrites:false} };
-      },
+      get: function(){ return fetchQuery(logical, table, wheres, limitN); },
       onSnapshot: function(next, onErr){
-        ref.get().then(next).catch(function(e){ if(onErr) onErr(e); });
-        return function(){};
+        var l = { kind:'query', table:table, logical:logical, wheres:wheres, limitN:limitN, cb:next, onErr:onErr };
+        listeners.add(l);
+        ensureRealtime(table);
+        fetchQuery(logical, table, wheres, limitN).then(next).catch(function(e){ if(onErr) onErr(e); });
+        return function(){ listeners.delete(l); };
       }
     };
     return ref;
@@ -790,9 +832,7 @@ function subscribeQueue(status){
 }
 function unsubscribeQueue(){ if(queueUnsub){ queueUnsub(); queueUnsub=null; } }
 
-function auditAggregate(auditId){
-  var items = itemsByAudit[auditId] ? Object.values(itemsByAudit[auditId]) : null;
-  if(!items) return null;
+function computeAggregateFromItems(items){
   var total = items.length, pendentes=0, divergentes=0, conferidos=0, ok=0, validados=0, alertas=0;
   items.forEach(function(it){
     if(it.status==='pendente') pendentes++;
@@ -806,10 +846,15 @@ function auditAggregate(auditId){
   return { total:total, pendentes:pendentes, divergentes:divergentes, aguardandoValidacao:conferidos, alertasGestor:alertas, resolvidos:resolvidos, prontoParaAutorizacao: total>0 && resolvidos===total };
 }
 
+/* Sempre busca os itens direto da store (nunca confia no cache local
+   itemsByAudit) antes de recalcular o resumo do balanço — evita uma
+   corrida entre a escrita do item e a atualização assíncrona do cache
+   reativo, que fazia o resumo ser salvo com números desatualizados. */
 async function recalcAndPersist(auditId){
-  var agg = auditAggregate(auditId);
-  if(!agg) return;
   var store = await storeReady;
+  var snap = await store.collection('items').where('auditId','==',auditId).get();
+  var items = snap.docs.map(function(d){ return d.data(); });
+  var agg = computeAggregateFromItems(items);
   await store.doc('audits/'+auditId).update({
     totalItens: agg.total, pendentes: agg.pendentes, divergentes: agg.divergentes,
     aguardandoValidacao: agg.aguardandoValidacao, alertasGestor: agg.alertasGestor, resolvidos: agg.resolvidos,

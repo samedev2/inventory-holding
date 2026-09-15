@@ -69,6 +69,12 @@ create table itens (
 create index itens_balanco_id_idx on itens (balanco_id);
 create index itens_empresa_status_idx on itens (empresa_id, status);
 
+-- Realtime: o app assina mudanças nessas tabelas para que uma ação de
+-- um usuário (autorizar, validar, contar) apareça na tela de qualquer
+-- outro usuário olhando o mesmo balanço, sem precisar recarregar.
+alter publication supabase_realtime add table balancos;
+alter publication supabase_realtime add table itens;
+
 -- Row-Level Security: cada empresa só acessa os próprios dados.
 alter table empresas enable row level security;
 alter table profiles enable row level security;
