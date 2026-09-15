@@ -1503,7 +1503,7 @@ function screenImportar(){
   return '<div class="banner">'+ic('download',18)+'<div>Adicione um novo balanço em branco ou importe um balanço de exemplo já preenchido (dados fictícios) para explorar o fluxo completo.</div></div>'+
     '<div class="action-grid" style="grid-template-columns:1fr;">'+
       '<div class="action-card" data-action="nav" data-route="novo-balanco"><div class="ac-icon">'+ic('plus',18)+'</div><div><div class="ac-label">Novo balanço</div><div class="ac-sub">Cadastro manual: local, responsável e itens</div></div></div>'+
-      '<div class="action-card" data-action="importMock"><div class="ac-icon">'+ic('download',18)+'</div><div><div class="ac-label">Importar dados de exemplo</div><div class="ac-sub">Gera um balanço mock com itens em vários estágios (pendente, divergente, conferido) para testar o app</div></div></div>'+
+      '<div class="action-card" data-action="importMock"><div class="ac-icon">'+ic('download',18)+'</div><div><div class="ac-label">Importar dados de exemplo</div><div class="ac-sub">Gera um balanço mock salvo de verdade no banco, com itens em todos os estágios (pendente, ok, divergente, conferido, validado e alerta ao gestor)</div></div></div>'+
     '</div>';
 }
 
@@ -1684,48 +1684,83 @@ var Actions = {
     var store = await storeReady;
     var id = 'bal-mock-' + uid();
     var pool = MOCK_PRODUCTS.slice();
-    var n = Math.min(pool.length, randInt(6,10));
+    var n = Math.min(pool.length, 11);
     var chosen = [];
     for(var i=0;i<n;i++){ chosen.push(pool.splice(Math.floor(Math.random()*pool.length),1)[0]); }
-    var pendentes=0, divergentes=0, aguardandoValidacao=0, resolvidos=0;
-    var writes = chosen.map(function(p){
+
+    // Garante pelo menos 1 item em cada estágio do ciclo (mesmo com poucos
+    // itens), o resto preenchido aleatoriamente entre os estágios mais comuns.
+    var statusPlan = ['pendente','pendente','ok','ok','divergente','divergente','conferido','validado','alerta_gestor'];
+    while(statusPlan.length < chosen.length){ statusPlan.push(pick(['pendente','ok','divergente'])); }
+    statusPlan = statusPlan.slice(0, chosen.length);
+    for(var s=statusPlan.length-1; s>0; s--){ var j=Math.floor(Math.random()*(s+1)); var tmp=statusPlan[s]; statusPlan[s]=statusPlan[j]; statusPlan[j]=tmp; }
+
+    var quem = profile.nome || 'Você';
+    var pendentes=0, divergentes=0, aguardandoValidacao=0, alertasGestor=0, resolvidos=0;
+    var nowIso = new Date().toISOString();
+    function contagem(numero, valor){ return { numero:numero, valor:valor, por:quem, em:nowIso }; }
+
+    // Monta os dados de todos os itens primeiro (síncrono) — o balanço
+    // precisa existir antes dos itens, já que "itens.balanco_id" tem uma
+    // foreign key para "balancos.id" no schema do Supabase.
+    var itemsData = chosen.map(function(p, idx){
       var sku = p.sku + randInt(1000,9999);
       var qtdSistema = randInt(10,300);
-      var roll = Math.random();
+      var status = statusPlan[idx];
       var data = {
         auditId:id, sku:sku, descricao:p.descricao, categoria:p.categoria,
         localizacao:'Corredor '+randInt(1,9)+' - Prateleira '+String.fromCharCode(65+randInt(0,4))+randInt(1,5),
-        qtdSistema:qtdSistema, unidade:p.unidade, qtdContada:null, status:'pendente'
+        qtdSistema:qtdSistema, unidade:p.unidade, qtdContada:null, status:'pendente', numContagens:0, contagens:[]
       };
-      if(roll<0.35){
+      if(status==='pendente'){
         pendentes++;
-      } else if(roll<0.60){
-        data.qtdContada = qtdSistema; data.status='ok'; data.contadoPor='Importação mock'; data.contadoEm=new Date().toISOString();
+      } else if(status==='ok'){
+        data.qtdContada=qtdSistema; data.status='ok'; data.numContagens=1; data.contagens=[contagem(1,qtdSistema)];
+        data.contadoPor=quem; data.contadoEm=nowIso;
         resolvidos++;
-      } else if(roll<0.80){
-        var diff = randInt(1, Math.max(2,Math.round(qtdSistema*0.15)));
-        data.qtdContada = qtdSistema + (Math.random()<0.5?-diff:diff);
-        data.status='divergente'; data.contadoPor='Importação mock'; data.contadoEm=new Date().toISOString();
+      } else if(status==='divergente'){
+        var v1 = Math.max(0, qtdSistema - randInt(1, Math.max(2,Math.round(qtdSistema*0.15))));
+        data.qtdContada=v1; data.status='divergente'; data.numContagens=1; data.contagens=[contagem(1,v1)];
+        data.contadoPor=quem; data.contadoEm=nowIso; data.observacaoContagem='Divergência encontrada na 1ª contagem.';
         divergentes++;
-      } else {
-        var diff2 = randInt(1, Math.max(2,Math.round(qtdSistema*0.1)));
-        data.qtdContada = Math.max(0, qtdSistema - diff2); data.status='conferido';
-        data.contadoPor='Importação mock'; data.contadoEm=new Date().toISOString();
-        data.conferidoPor=profile.nome; data.conferidoEm=new Date().toISOString();
-        data.observacaoConferencia='Divergência confirmada automaticamente na importação de exemplo.';
+      } else if(status==='conferido'){
+        var v1c = Math.max(0, qtdSistema - randInt(2, Math.max(3,Math.round(qtdSistema*0.2))));
+        var v2c = Math.max(0, v1c + randInt(-2,2));
+        data.qtdContada=v2c; data.status='conferido'; data.numContagens=2; data.contagens=[contagem(1,v1c),contagem(2,v2c)];
+        data.contadoPor=quem; data.contadoEm=nowIso;
+        data.conferidoPor=quem; data.conferidoEm=nowIso; data.observacaoConferencia='Divergência confirmada após recontagem.';
         aguardandoValidacao++;
+      } else if(status==='validado'){
+        var v1v = Math.max(0, qtdSistema - randInt(1, Math.max(2,Math.round(qtdSistema*0.1))));
+        var v2v = Math.max(0, v1v - randInt(0,2));
+        data.qtdContada=v2v; data.status='validado'; data.numContagens=2; data.contagens=[contagem(1,v1v),contagem(2,v2v)];
+        data.contadoPor=quem; data.contadoEm=nowIso;
+        data.conferidoPor=quem; data.conferidoEm=nowIso; data.observacaoConferencia='Confirmado.';
+        data.validadoPor=quem; data.validadoEm=nowIso; data.observacaoValidacao='Ajuste aprovado por baixa/avaria identificada.';
+        resolvidos++;
+      } else if(status==='alerta_gestor'){
+        var c1=randInt(1,Math.max(2,Math.round(qtdSistema*0.3))), c2=randInt(1,Math.max(2,Math.round(qtdSistema*0.3))), c3=randInt(1,Math.max(2,Math.round(qtdSistema*0.3)));
+        data.qtdContada=c3; data.status='alerta_gestor'; data.numContagens=3; data.contagens=[contagem(1,c1),contagem(2,c2),contagem(3,c3)];
+        data.contadoPor=quem; data.contadoEm=nowIso; data.observacaoContagem='Três contagens sem convergir com o sistema.';
+        data.conferidoPor=quem; data.conferidoEm=nowIso; data.observacaoConferencia='Encaminhado ao gestor após 3 contagens.';
+        alertasGestor++;
       }
-      return store.collection('items').doc(id+'__'+sku).set(data);
+      return data;
     });
-    await Promise.all(writes);
+
     var total = chosen.length;
+    // 1) cria o balanço primeiro (satisfaz a FK antes de qualquer item existir)
     await store.doc('audits/'+id).set({
       nome:'Balanço Mock '+ new Date().toLocaleDateString('pt-BR'),
-      local: pick(MOCK_LOCAIS), responsavel: profile.nome, criadoEm: new Date().toISOString(), tolerancia: 3,
+      local: pick(MOCK_LOCAIS), responsavel: quem, criadoEm: nowIso, tolerancia: 3,
       totalItens: total, pendentes: pendentes, divergentes: divergentes, aguardandoValidacao: aguardandoValidacao,
-      resolvidos: resolvidos, prontoParaAutorizacao: total>0 && resolvidos===total
+      alertasGestor: alertasGestor, resolvidos: resolvidos, prontoParaAutorizacao: total>0 && resolvidos===total
     });
-    toast('Balanço de exemplo importado com '+total+' itens.');
+    // 2) só então grava os itens
+    await Promise.all(itemsData.map(function(data){
+      return store.collection('items').doc(id+'__'+data.sku).set(data);
+    }));
+    toast('Balanço de exemplo importado com '+total+' itens em todos os estágios.');
     go('balanco/'+id);
   }
 };
