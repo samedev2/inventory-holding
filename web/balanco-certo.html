@@ -1,5 +1,6 @@
 <title>Balanço Certo</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
 :root{
   --color-canvas:#f2f3f6;
@@ -441,6 +442,106 @@ var Auth = {
   signOut: function(){ try{ localStorage.removeItem('balanco-certo:auth'); }catch(e){} }
 };
 
+/* ---------------- Supabase (multi-empresa, opcional) ----------------
+   Preencha url/anonKey para ligar o modo multi-empresa (login por código
+   da empresa + e-mail/senha reais, dados isolados por empresa no Postgres).
+   Deixe em branco para manter o modo demo local (usuário demo/demo123). */
+var SUPABASE_CONFIG = { url: '', anonKey: '' };
+function supabaseConfigured(){ return !!(SUPABASE_CONFIG.url && SUPABASE_CONFIG.anonKey); }
+var USING_SUPABASE = false;
+var SB_STATE = { empresaId: null, empresaCodigo: null, userId: null };
+var sbClient = null;
+function getSbClient(){
+  if(!sbClient && window.supabase && supabaseConfigured()){
+    sbClient = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+  }
+  return sbClient;
+}
+
+var SB_TABLES = { audits:'balancos', items:'itens' };
+var SB_ALIASES = { items: { js2db:{auditId:'balanco_id'}, db2js:{balanco_id:'auditId'} } };
+function toSnakeKey(k){ return k.replace(/[A-Z]/g, function(m){ return '_'+m.toLowerCase(); }); }
+function toCamelKey(k){ return k.replace(/_([a-z0-9])/g, function(_,c){ return c.toUpperCase(); }); }
+function sbKeyToDb(logical,k){ var al=SB_ALIASES[logical]; if(al && al.js2db[k]) return al.js2db[k]; return toSnakeKey(k); }
+function sbKeyFromDb(logical,k){ var al=SB_ALIASES[logical]; if(al && al.db2js[k]) return al.db2js[k]; return toCamelKey(k); }
+function sbRowToDb(logical,obj){ var out={}; Object.keys(obj).forEach(function(k){ out[sbKeyToDb(logical,k)] = obj[k]; }); return out; }
+function sbRowFromDb(logical,row){ var out={}; Object.keys(row).forEach(function(k){ out[sbKeyFromDb(logical,k)] = row[k]; }); return out; }
+
+function createSupabaseDB(client){
+  function tableFor(logical){ return SB_TABLES[logical] || logical; }
+  function snapFromRow(logical, id, row){
+    var data = row ? sbRowFromDb(logical, row) : undefined;
+    return { id:id, exists:!!row, data:function(){ return data; }, metadata:{fromCache:false,hasPendingWrites:false} };
+  }
+  function makeDocRef(path){
+    var seg = path.split('/'), logical = seg[0], id = seg[1], table = tableFor(logical);
+    return {
+      id:id, path:path,
+      get: async function(){
+        var res = await client.from(table).select('*').eq('id', id).maybeSingle();
+        if(res.error) throw res.error;
+        return snapFromRow(logical, id, res.data);
+      },
+      set: async function(data){
+        var payload = sbRowToDb(logical, data);
+        payload.id = id;
+        if(SB_STATE.empresaId) payload.empresa_id = SB_STATE.empresaId;
+        var res = await client.from(table).upsert(payload);
+        if(res.error) throw res.error;
+      },
+      update: async function(data){
+        var res = await client.from(table).update(sbRowToDb(logical, data)).eq('id', id);
+        if(res.error) throw res.error;
+      },
+      delete: async function(){
+        var res = await client.from(table).delete().eq('id', id);
+        if(res.error) throw res.error;
+      },
+      onSnapshot: function(next, onErr){
+        this.get().then(next).catch(function(e){ if(onErr) onErr(e); });
+        return function(){};
+      },
+      collection: function(sub){ return makeCollRef(path+'/'+sub); }
+    };
+  }
+  function makeCollRef(path, wheres, limitN){
+    wheres = wheres||[];
+    var seg = path.split('/'), logical = seg[0], table = tableFor(logical);
+    var ref = {
+      path:path,
+      where: function(f,op,v){ return makeCollRef(path, wheres.concat([[f,op,v]]), limitN); },
+      orderBy: function(){ return ref; },
+      limit: function(n){ return makeCollRef(path, wheres, n); },
+      doc: function(id){ return makeDocRef(path+'/'+(id||uid())); },
+      add: async function(data){ var r = ref.doc(); await r.set(data); return r; },
+      get: async function(){
+        var q = client.from(table).select('*');
+        wheres.forEach(function(w){
+          var col = sbKeyToDb(logical, w[0]);
+          if(w[1]==='==') q = q.eq(col, w[2]);
+          else if(w[1]==='!=') q = q.neq(col, w[2]);
+          else if(w[1]==='<') q = q.lt(col, w[2]);
+          else if(w[1]==='<=') q = q.lte(col, w[2]);
+          else if(w[1]==='>') q = q.gt(col, w[2]);
+          else if(w[1]==='>=') q = q.gte(col, w[2]);
+          else if(w[1]==='in') q = q.in(col, w[2]);
+        });
+        if(limitN) q = q.limit(limitN);
+        var res = await q;
+        if(res.error) throw res.error;
+        var docs = (res.data||[]).map(function(row){ return snapFromRow(logical, row.id, row); });
+        return { docs:docs, size:docs.length, empty:docs.length===0, docChanges:function(){ return []; }, metadata:{fromCache:false,hasPendingWrites:false} };
+      },
+      onSnapshot: function(next, onErr){
+        ref.get().then(next).catch(function(e){ if(onErr) onErr(e); });
+        return function(){};
+      }
+    };
+    return ref;
+  }
+  return { doc:function(p){ return makeDocRef(p); }, collection:function(p){ return makeCollRef(p); } };
+}
+
 /* ---------------- Mock data pool (for the "importar dados" quick action) ---------------- */
 var MOCK_PRODUCTS = [
   {sku:'ELE-', descricao:'Furadeira de Impacto 650W', categoria:'Eletrônicos', unidade:'un'},
@@ -543,17 +644,32 @@ function createLocalDB(){
   return { doc:function(p){ return makeDocRef(p); }, collection:function(p){ return makeCollRef(p); } };
 }
 
-/* ---------------- Data layer ---------------- */
+/* ---------------- Data layer ----------------
+   storeReady resolves to whichever backend is active:
+   - Claude Artifact db capability (when embedded there)
+   - Supabase (when SUPABASE_CONFIG is filled in) — resolved only after
+     login succeeds, since writes need to know the logged-in empresaId
+   - localStorage fallback (demo mode, no backend configured) */
 var db = null;
-var storeReady = (async function(){
+var _storeResolve;
+var storeReady = new Promise(function(resolve){ _storeResolve = resolve; });
+function resolveStore(instance){ db = instance; _storeResolve(instance); }
+
+(async function initNonSupabaseStore(){
+  if(supabaseConfigured()) return; // Supabase path resolves later, from finalizeSupabaseLogin()
   try{
     if(window.claude && window.claude.use){
       db = await window.claude.use('db');
     }
   }catch(e){ db = null; }
   if(!db) db = createLocalDB();
-  return db;
+  resolveStore(db);
 })();
+
+function finalizeSupabaseLogin(client){
+  USING_SUPABASE = true;
+  resolveStore(createSupabaseDB(client));
+}
 
 var audits = {};           // id -> data
 var itemsByAudit = {};     // auditId -> { sku -> data }
@@ -1225,29 +1341,43 @@ function screenFila(){
 }
 
 function screenPerfil(){
-  var roleCards = Object.keys(ROLES).map(function(k){
-    var r = ROLES[k], sel = profile.papel===k;
-    return '<div class="role-card'+(sel?' selected':'')+'" data-action="setRole" data-role="'+k+'">'+
-      '<div class="rc-icon">'+ic(r.icon,18)+'</div>'+
-      '<div><div class="rc-title">'+r.label+'</div><div class="rc-desc">'+r.desc+'</div></div>'+
-      (sel? '<span class="rc-check">'+ic('checkcircle',20)+'</span>' : '')+
-    '</div>';
-  }).join('');
+  var roleSection;
+  if(USING_SUPABASE){
+    var r = ROLES[profile.papel] || {label:profile.papel, icon:'user', desc:''};
+    roleSection = ''+
+      '<div class="section-title">Papel na empresa</div>'+
+      '<div class="role-card selected" style="cursor:default;">'+
+        '<div class="rc-icon">'+ic(r.icon,18)+'</div>'+
+        '<div><div class="rc-title">'+esc(r.label)+'</div><div class="rc-desc">'+esc(r.desc)+'</div></div>'+
+      '</div>'+
+      '<div class="banner">'+ic('shield',18)+'<div>O papel é definido pelo administrador da empresa ('+esc(SB_STATE.empresaCodigo||'')+') e não pode ser trocado por aqui.</div></div>';
+  } else {
+    var roleCards = Object.keys(ROLES).map(function(k){
+      var rk = ROLES[k], sel = profile.papel===k;
+      return '<div class="role-card'+(sel?' selected':'')+'" data-action="setRole" data-role="'+k+'">'+
+        '<div class="rc-icon">'+ic(rk.icon,18)+'</div>'+
+        '<div><div class="rc-title">'+rk.label+'</div><div class="rc-desc">'+rk.desc+'</div></div>'+
+        (sel? '<span class="rc-check">'+ic('checkcircle',20)+'</span>' : '')+
+      '</div>';
+    }).join('');
+    roleSection = ''+
+      '<div class="section-title">Modo de visualização</div>'+
+      '<div class="banner">'+ic('shield',18)+'<div>Este protótipo permite alternar de papel para testar todo o fluxo de coleta, conferência, validação e autorização em um único aparelho.</div></div>'+
+      roleCards;
+  }
 
   return ''+
     '<div class="card">'+
       '<div style="display:flex;align-items:center;gap:14px;">'+
         '<div class="avatar" style="width:46px;height:46px;font-size:16px;">'+esc(initials(profile.nome))+'</div>'+
-        '<div><div style="font-weight:600;font-size:15px;">'+esc(profile.nome)+'</div><div class="li-sub">'+ROLES[profile.papel].label+'</div></div>'+
+        '<div><div style="font-weight:600;font-size:15px;">'+esc(profile.nome)+'</div><div class="li-sub">'+esc((ROLES[profile.papel]||{}).label||profile.papel)+'</div></div>'+
       '</div>'+
       '<form data-form="perfil" class="card-footer">'+
         field('nome','Seu nome','text','Seu nome', true, profile.nome)+
         '<button class="btn secondary block" type="submit">Salvar nome</button>'+
       '</form>'+
     '</div>'+
-    '<div class="section-title">Modo de visualização</div>'+
-    '<div class="banner">'+ic('shield',18)+'<div>Este protótipo permite alternar de papel para testar todo o fluxo de coleta, conferência, validação e autorização em um único aparelho.</div></div>'+
-    roleCards+
+    roleSection+
     '<button class="btn outline block" data-action="logout" style="margin-top:6px;">Sair da conta</button>';
 }
 
@@ -1354,29 +1484,73 @@ var Forms = {
     var fd = new FormData(form);
     profile.nome = String(fd.get('nome')||'Você').trim() || 'Você';
     Profile.set(profile);
+    if(USING_SUPABASE && sbClient && SB_STATE.userId){
+      try{ await sbClient.from('profiles').update({ nome: profile.nome }).eq('id', SB_STATE.userId); }catch(e){ console.error(e); }
+    }
     toast('Perfil atualizado.');
     render();
   },
   'login': async function(form){
     var fd = new FormData(form);
-    var usuario = String(fd.get('usuario')||'').trim();
-    var senha = String(fd.get('senha')||'');
     var errEl = document.getElementById('login-error');
-    if(usuario.toLowerCase()!==DEMO_USER || senha!==DEMO_PASS){
-      if(errEl){ errEl.hidden = false; }
+    function showErr(msg){ if(errEl){ var m=errEl.querySelector('.err-msg'); if(m) m.textContent = msg; errEl.hidden = false; } }
+
+    if(!supabaseConfigured()){
+      var usuario = String(fd.get('usuario')||'').trim();
+      var senha = String(fd.get('senha')||'');
+      if(usuario.toLowerCase()!==DEMO_USER || senha!==DEMO_PASS){
+        showErr('Usuário ou senha incorretos. Confira os dados de demonstração acima.');
+        return;
+      }
+      if(errEl) errEl.hidden = true;
+      Auth.signIn();
+      enterApp(true);
       return;
     }
-    if(errEl) errEl.hidden = true;
-    Auth.signIn();
-    enterApp(true);
+
+    var codigo = String(fd.get('codigo')||'').trim().toUpperCase();
+    var email = String(fd.get('email')||'').trim();
+    var senha2 = String(fd.get('senha')||'');
+    var client = getSbClient();
+    if(!client){ showErr('Não foi possível conectar ao Supabase.'); return; }
+    try{
+      var empRes = await client.from('empresas').select('id,codigo,nome').eq('codigo', codigo).maybeSingle();
+      if(empRes.error || !empRes.data){ showErr('Código de empresa não encontrado.'); return; }
+      var authRes = await client.auth.signInWithPassword({ email: email, password: senha2 });
+      if(authRes.error){ showErr('E-mail ou senha incorretos.'); return; }
+      var ok = await loadSupabaseProfile(client, authRes.data.user, empRes.data);
+      if(!ok){ await client.auth.signOut(); showErr('Este usuário não pertence à empresa informada.'); return; }
+      if(errEl) errEl.hidden = true;
+      enterApp(true);
+    }catch(err){
+      console.error(err);
+      showErr('Não foi possível entrar. Tente novamente.');
+    }
   }
 };
+
+async function loadSupabaseProfile(client, user, empresa){
+  var res = await client.from('profiles').select('empresa_id,nome,papel').eq('id', user.id).maybeSingle();
+  if(res.error || !res.data || res.data.empresa_id !== empresa.id) return false;
+  SB_STATE.empresaId = empresa.id;
+  SB_STATE.empresaCodigo = empresa.codigo;
+  SB_STATE.userId = user.id;
+  profile.nome = res.data.nome;
+  profile.papel = res.data.papel;
+  Profile.set(profile);
+  finalizeSupabaseLogin(client);
+  return true;
+}
 
 var Actions = {
   nav: function(ds){ go(ds.route); },
   filterBalancos: function(ds){ screenBalancos._filter = ds.filter; render(); },
-  setRole: function(ds){ profile.papel = ds.role; Profile.set(profile); render(); },
+  setRole: function(ds){ if(USING_SUPABASE) return; profile.papel = ds.role; Profile.set(profile); render(); },
   logout: function(){
+    if(USING_SUPABASE && sbClient){
+      sbClient.auth.signOut().finally(function(){ location.reload(); });
+      return;
+    }
     Auth.signOut();
     location.hash = '';
     showLogin();
@@ -1483,14 +1657,29 @@ function render(){
 /* ---------------- Login screen & boot ---------------- */
 function renderLoginScreen(){
   var el = document.getElementById('login-screen');
-  el.innerHTML =
-    '<div class="login-brand">'+
+  var brand = '<div class="login-brand">'+
       '<div class="login-mark">'+ic('shield',30)+'</div>'+
       '<div class="login-name">Balanço Certo</div>'+
       '<div class="login-tag">Coleta, conferência, validação e autorização de inventários</div>'+
-    '</div>'+
+    '</div>';
+
+  if(supabaseConfigured()){
+    el.innerHTML = brand+
+      '<div class="login-error" id="login-error" hidden>'+ic('alert',16)+'<div class="err-msg">Não foi possível entrar.</div></div>'+
+      '<form data-form="login">'+
+        '<div class="card">'+
+          field('codigo','Código da empresa','text','Ex.: ACME01', true)+
+          field('email','E-mail','email','voce@empresa.com', true)+
+          field('senha','Senha','password','••••••••', true)+
+        '</div>'+
+        '<button class="btn primary block" type="submit" style="margin-top:16px;">Entrar</button>'+
+      '</form>';
+    return;
+  }
+
+  el.innerHTML = brand+
     '<div class="login-hint">'+ic('lock',16)+'<div>Acesso de demonstração: usuário <b>'+DEMO_USER+'</b> · senha <b>'+DEMO_PASS+'</b></div></div>'+
-    '<div class="login-error" id="login-error" hidden>'+ic('alert',16)+'<div>Usuário ou senha incorretos. Confira os dados de demonstração acima.</div></div>'+
+    '<div class="login-error" id="login-error" hidden>'+ic('alert',16)+'<div class="err-msg">Usuário ou senha incorretos. Confira os dados de demonstração acima.</div></div>'+
     '<form data-form="login">'+
       '<div class="card">'+
         field('usuario','Usuário','text','demo', true, DEMO_USER)+
@@ -1532,14 +1721,50 @@ function enterApp(withFade){
   }
 }
 
-if(Auth.isIn()){
+function isLoggedIn(){
+  if(supabaseConfigured()) return USING_SUPABASE && !!SB_STATE.empresaId;
+  return Auth.isIn();
+}
+
+function enterAppNoFade(){
   document.getElementById('login-shell').hidden = true;
   document.getElementById('app').hidden = false;
   render();
-} else {
-  showLogin();
 }
 
-storeReady.then(function(){ if(Auth.isIn()) render(); });
-window.addEventListener('hashchange', function(){ if(Auth.isIn()) render(); });
+async function boot(){
+  if(supabaseConfigured()){
+    var client = getSbClient();
+    if(client){
+      try{
+        var sRes = await client.auth.getSession();
+        var session = sRes.data && sRes.data.session;
+        if(session && session.user){
+          var profRes = await client.from('profiles').select('empresa_id,nome,papel').eq('id', session.user.id).maybeSingle();
+          if(profRes.data){
+            var empRes = await client.from('empresas').select('id,codigo').eq('id', profRes.data.empresa_id).maybeSingle();
+            if(empRes.data){
+              SB_STATE.empresaId = empRes.data.id;
+              SB_STATE.empresaCodigo = empRes.data.codigo;
+              SB_STATE.userId = session.user.id;
+              profile.nome = profRes.data.nome;
+              profile.papel = profRes.data.papel;
+              Profile.set(profile);
+              finalizeSupabaseLogin(client);
+              enterAppNoFade();
+              return;
+            }
+          }
+        }
+      }catch(e){ console.error(e); }
+    }
+    showLogin();
+    return;
+  }
+  if(Auth.isIn()){ enterAppNoFade(); } else { showLogin(); }
+}
+boot();
+
+storeReady.then(function(){ if(isLoggedIn()) render(); });
+window.addEventListener('hashchange', function(){ if(isLoggedIn()) render(); });
 </script>

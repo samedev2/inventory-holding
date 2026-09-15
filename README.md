@@ -43,6 +43,32 @@ O APK fica em `android/android/app/build/outputs/apk/debug/app-debug.apk`.
 > `CreateProcess error=267` / nome de diretório inválido, mova o projeto para um caminho curto (ex.: `C:\t\android`)
 > — é o limite de tamanho de caminho do Windows (MAX_PATH).
 
+## Multi-empresa (Supabase)
+
+Por padrão o app roda em modo demo (login `demo`/`demo123`, dados em `localStorage`, papel trocável livremente
+em Perfil). Para ligar o modo real — várias empresas, cada uma vendo só os próprios dados, login de verdade:
+
+1. Crie um projeto gratuito em [supabase.com](https://supabase.com).
+2. Abra o **SQL Editor** do projeto e rode `supabase/schema.sql` (cria as tabelas, a função e as políticas de
+   isolamento por empresa).
+3. Provisione a primeira empresa e o primeiro usuário (passo a passo comentado no fim do próprio `schema.sql`):
+   `insert into empresas (...)`, criar o usuário em Authentication → Users, depois `insert into profiles (...)`
+   vinculando usuário + empresa + papel.
+4. Em `web/balanco-certo.html` (e `android/www/index.html`), preencha:
+   ```js
+   var SUPABASE_CONFIG = { url: 'https://SEU-PROJETO.supabase.co', anonKey: 'SUA_ANON_KEY' };
+   ```
+   (a *anon key* é pública por design — o isolamento real é garantido pelas políticas de Row-Level Security do
+   passo 2, não pela chave).
+5. Publique/rode o app normalmente. A tela de login passa a pedir **Código da empresa + E-mail + Senha**, e
+   cada usuário só enxerga os balanços/itens da própria empresa. O papel (operador/conferente/supervisor/gestor)
+   deixa de ser trocável pelo usuário — é definido só no banco (coluna `profiles.papel`).
+
+Com `SUPABASE_CONFIG` vazio (padrão), nada disso é ativado — o app continua funcionando 100% no modo demo local.
+
+Fora de escopo por enquanto (ver `README`/plano de implementação): cadastro self-service de empresa, convite de
+colegas, Supabase Realtime (atualização ao vivo entre aparelhos), recuperação de senha.
+
 ## Papéis e fluxo
 
 - **Operador de Coleta** — conta os itens fisicamente.
