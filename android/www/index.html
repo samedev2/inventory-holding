@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0a0a0b">
 </head>
 <body>
-<title>Balanço Certo</title>
+<title>InventoryHolding</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
@@ -346,8 +346,62 @@ h1,h2,h3,p{margin:0;}
 .app-shell.fading-in{animation:shellFadeIn .45s ease both;}
 @keyframes shellFadeOut{from{opacity:1;transform:scale(1);}to{opacity:0;transform:scale(.98);}}
 @keyframes shellFadeIn{from{opacity:0;transform:scale(1.01);}to{opacity:1;transform:scale(1);}}
+
+/* Boot animation */
+#boot-shell{background:var(--brand-mark-bg);align-items:center;justify-content:center;cursor:pointer;}
+.boot-stage{display:flex;flex-direction:column;align-items:center;gap:20px;padding:24px;}
+.boot-crates{position:relative;width:100px;height:110px;flex:none;}
+.boot-crate{
+  position:absolute;left:50%;width:68px;height:24px;margin-left:-34px;border-radius:7px;
+  background:var(--color-on-ink);box-shadow:0 4px 14px rgba(0,0,0,.25);
+  opacity:0;transform:translateY(18px) scale(.85);
+  animation:bootCrateIn .55s cubic-bezier(.22,.9,.32,1.3) forwards;
+}
+.boot-crate::before{content:'';position:absolute;left:8px;right:8px;top:50%;height:2px;margin-top:-1px;background:var(--brand-mark-bg);opacity:.5;border-radius:1px;}
+.boot-crate:nth-child(1){bottom:6px;animation-delay:.05s;}
+.boot-crate:nth-child(2){bottom:34px;animation-delay:.3s;}
+.boot-crate:nth-child(3){bottom:62px;animation-delay:.55s;}
+@keyframes bootCrateIn{
+  0%{opacity:0;transform:translateY(18px) scale(.85);}
+  65%{opacity:1;transform:translateY(-4px) scale(1.04);}
+  100%{opacity:1;transform:translateY(0) scale(1);}
+}
+.boot-check{
+  position:absolute;top:-6px;left:50%;width:34px;height:34px;margin-left:-17px;border-radius:50%;
+  background:var(--color-ember);color:#fff;display:flex;align-items:center;justify-content:center;
+  box-shadow:0 4px 14px rgba(0,0,0,.3);opacity:0;transform:scale(.3);
+  animation:bootCheckIn .45s cubic-bezier(.34,1.56,.64,1) forwards;animation-delay:.95s;
+}
+@keyframes bootCheckIn{to{opacity:1;transform:scale(1);}}
+.boot-name{
+  font-size:21px;font-weight:700;letter-spacing:-.3px;color:var(--brand-mark-fg);
+  opacity:0;transform:translateY(6px);animation:bootTextIn .5s ease forwards;animation-delay:1.15s;
+}
+.boot-tag{
+  font-size:12px;color:rgba(255,255,255,.55);margin-top:-14px;
+  opacity:0;transform:translateY(6px);animation:bootTextIn .5s ease forwards;animation-delay:1.3s;
+}
+.boot-hint{
+  font-size:11px;color:rgba(255,255,255,.35);margin-top:2px;
+  opacity:0;animation:bootTextIn .5s ease forwards;animation-delay:1.7s;
+}
+@keyframes bootTextIn{to{opacity:1;transform:translateY(0);}}
+#boot-shell.fading-out{animation:shellFadeOut .32s ease forwards;}
 </style>
 
+<div class="app-shell" id="boot-shell">
+  <div class="boot-stage" id="boot-stage" aria-label="Carregando InventoryHolding">
+    <div class="boot-crates">
+      <div class="boot-crate"></div>
+      <div class="boot-crate"></div>
+      <div class="boot-crate"></div>
+      <div class="boot-check"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5 9 17l10.5-10.5"/></svg></div>
+    </div>
+    <div class="boot-name">InventoryHolding</div>
+    <div class="boot-tag">Auditoria e controle de estoque</div>
+    <div class="boot-hint">Toque para continuar</div>
+  </div>
+</div>
 <div class="app-shell" id="login-shell" hidden>
   <div class="login-screen" id="login-screen"></div>
 </div>
@@ -852,7 +906,7 @@ function updateChrome(route){
     topbar.innerHTML =
       '<div class="brand-row">'+
         '<div class="brand-mark">'+ic('shield',19)+'</div>'+
-        '<div class="brand-titles"><div class="brand-name">Balanço Certo</div><div class="brand-sub">'+subMap[route.name]+'</div></div>'+
+        '<div class="brand-titles"><div class="brand-name">InventoryHolding</div><div class="brand-sub">'+subMap[route.name]+'</div></div>'+
       '</div>'+
       rightAction;
   } else {
@@ -1685,7 +1739,7 @@ function renderLoginScreen(){
   var el = document.getElementById('login-screen');
   var brand = '<div class="login-brand">'+
       '<div class="login-mark">'+ic('shield',30)+'</div>'+
-      '<div class="login-name">Balanço Certo</div>'+
+      '<div class="login-name">InventoryHolding</div>'+
       '<div class="login-tag">Coleta, conferência, validação e autorização de inventários</div>'+
     '</div>';
 
@@ -1794,7 +1848,46 @@ async function boot(){
   }
   if(Auth.isIn()){ enterAppNoFade(); } else { showLogin(); }
 }
-boot();
+
+/* ---------------- Boot animation (splash antes do login) ---------------- */
+function playBootChime(){
+  try{
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if(!Ctx) return;
+    var ctx = new Ctx();
+    var notes = [523.25, 659.25, 783.99, 1046.50]; // C5 - E5 - G5 - C6
+    var t0 = ctx.currentTime;
+    notes.forEach(function(freq, i){
+      var osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = 'sine'; osc.frequency.value = freq;
+      var start = t0 + i*0.11, dur = 0.24;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.16, start+0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start+dur);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(start); osc.stop(start+dur+0.02);
+    });
+    setTimeout(function(){ try{ ctx.close(); }catch(e){} }, 900);
+  }catch(e){}
+}
+
+function runBootScreen(){
+  return new Promise(function(resolve){
+    var shell = document.getElementById('boot-shell');
+    if(!shell){ resolve(); return; }
+    var done = false;
+    function finish(){
+      if(done) return; done = true;
+      shell.classList.add('fading-out');
+      setTimeout(function(){ shell.hidden = true; resolve(); }, 300);
+    }
+    shell.addEventListener('click', finish, {once:true});
+    setTimeout(playBootChime, 560);
+    setTimeout(finish, 2200);
+  });
+}
+
+runBootScreen().then(boot);
 
 storeReady.then(function(){ if(isLoggedIn()) render(); });
 window.addEventListener('hashchange', function(){ if(isLoggedIn()) render(); });
