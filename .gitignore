@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Android / Gradle build outputs
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+android/.gradle/
+android/local.properties
+android/captures/
+*.apk
+*.aab
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+Thumbs.db
+
+# Capacitor sync output (regenerated via npx cap sync)
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
