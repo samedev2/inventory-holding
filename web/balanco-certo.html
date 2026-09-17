@@ -416,7 +416,8 @@ function ic(name, size){
     bell:'<path d="M6 10.5a6 6 0 0 1 12 0c0 4 1.3 5.5 2 6.3H4c.7-.8 2-2.3 2-6.3z"/><path d="M9.7 19.5a2.3 2.3 0 0 0 4.6 0"/>',
     scan:'<path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M20 8V6a2 2 0 0 0-2-2h-2"/><path d="M4 16v2a2 2 0 0 0 2 2h2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/><path d="M4 12h16"/>',
     download:'<path d="M12 4v11.5M7.5 11l4.5 4.5L16.5 11"/><path d="M5 19.5h14"/>',
-    lock:'<rect x="5.5" y="10.5" width="13" height="9.5" rx="2.5"/><path d="M8.3 10.5V7.8a3.7 3.7 0 1 1 7.4 0v2.7"/>'
+    lock:'<rect x="5.5" y="10.5" width="13" height="9.5" rx="2.5"/><path d="M8.3 10.5V7.8a3.7 3.7 0 1 1 7.4 0v2.7"/>',
+    trash:'<path d="M5 7.5h14"/><path d="M9.5 7.5V5.3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2.2"/><path d="M7 7.5 7.8 19a1.5 1.5 0 0 0 1.5 1.4h5.4A1.5 1.5 0 0 0 16.2 19l.8-11.5"/><path d="M10.3 11v6.2M13.7 11v6.2"/>'
   };
   return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">'+(p[name]||'')+'</svg>';
 }
@@ -440,7 +441,7 @@ var ROLES = {
   operador:   { label:'Operador de Coleta', short:'Operador', icon:'package', desc:'Faz a contagem física dos itens no depósito ou loja e registra as quantidades encontradas.' },
   conferente: { label:'Conferente',         short:'Conferente', icon:'search', desc:'Revisa as contagens com divergência e confirma se o número deve seguir para validação.' },
   supervisor: { label:'Supervisor',         short:'Supervisor', icon:'shield', desc:'Analisa as divergências confirmadas e valida o ajuste que será aplicado ao estoque.' },
-  gestor:     { label:'Gestor',             short:'Gestor', icon:'checkcircle', desc:'Acompanha todos os balanços e autoriza o encerramento com o ajuste final de estoque.' }
+  gestor:     { label:'Gestor',             short:'Gestor', icon:'checkcircle', desc:'Acompanha todos os inventários e autoriza o encerramento com o ajuste final de estoque.' }
 };
 var MAX_CONTAGENS = 3;
 function canRole(action, role){
@@ -450,7 +451,8 @@ function canRole(action, role){
     validar:['supervisor','gestor'],
     resolverAlerta:['gestor'],
     autorizar:['gestor'],
-    gerenciar:['supervisor','gestor']
+    gerenciar:['supervisor','gestor'],
+    excluir:['gestor']
   };
   return (m[action]||[]).indexOf(role) !== -1;
 }
@@ -865,7 +867,7 @@ function stageOf(audit){
   if((audit.aguardandoValidacao||0)>0 || (audit.alertasGestor||0)>0) return 'validacao';
   return 'coleta';
 }
-var STAGE_LABEL = { coleta:'Em coleta', conferencia:'Em conferência', validacao:'Em validação', autorizacao:'Aguardando autorização', encerrado:'Encerrado' };
+var STAGE_LABEL = { coleta:'Em contagem', conferencia:'Em conferência', validacao:'Em validação', autorizacao:'Aguardando autorização', encerrado:'Encerrado' };
 var STAGE_ORDER = ['coleta','conferencia','validacao','autorizacao'];
 
 /* ---------------- Router ---------------- */
@@ -925,13 +927,13 @@ function updateChrome(route){
 
   if(isRoot){
     var subMap = {
-      home: esc(ROLES[profile.papel].short)+' · '+fmtNum(Object.values(audits).filter(function(a){return !a.autorizadoEm;}).length)+' balanços ativos',
-      balancos: 'Todos os balanços da empresa',
+      home: esc(ROLES[profile.papel].short)+' · '+fmtNum(Object.values(audits).filter(function(a){return !a.autorizadoEm;}).length)+' inventários ativos',
+      balancos: 'Todos os inventários da empresa',
       fila: 'Papel atual: '+esc(roleInfo.short),
       perfil: 'Conta e permissões'
     };
     var rightAction = (route.name==='balancos' && canRole('gerenciar',profile.papel))
-      ? '<button class="bell-btn" data-action="nav" data-route="novo-balanco" aria-label="Novo balanço">'+ic('plus',18)+'</button>'
+      ? '<button class="bell-btn" data-action="nav" data-route="novo-balanco" aria-label="Novo inventário">'+ic('plus',18)+'</button>'
       : '<button class="bell-btn" data-action="nav" data-route="fila" aria-label="Notificações">'+ic('bell',18)+(qCount?'<span class="nav-badge">'+qCount+'</span>':'')+'</button>';
     topbar.innerHTML =
       '<div class="brand-row">'+
@@ -941,9 +943,9 @@ function updateChrome(route){
       rightAction;
   } else {
     var titleMap = {
-      'novo-balanco':{eyebrow:'Balanços', title:'Novo balanço', back:'balancos'},
+      'novo-balanco':{eyebrow:'Inventários', title:'Novo inventário', back:'balancos'},
       'importar':{eyebrow:'Adicionar', title:'Novos dados', back:'home'},
-      'audit-detail':{eyebrow:'Balanço', title:(audits[route.auditId]||{}).nome||'Carregando…', back:'balancos'},
+      'audit-detail':{eyebrow:'Inventário', title:(audits[route.auditId]||{}).nome||'Carregando…', back:'balancos'},
       'coletar-lista':{eyebrow:'Coleta', title:'Itens a contar', back:'balanco/'+route.auditId},
       'coletar-item':{eyebrow:'Coleta', title:'Registrar contagem', back:'balanco/'+route.auditId+'/coletar'},
       'conferencia-lista':{eyebrow:'Conferência', title:'Divergências', back:'balanco/'+route.auditId},
@@ -952,9 +954,9 @@ function updateChrome(route){
       'validar-item':{eyebrow:'Validação', title:'Validar ajuste', back:'balanco/'+route.auditId+'/validacao'},
       'alerta-lista':{eyebrow:'Alerta', title:'Alerta ao gestor', back:'balanco/'+route.auditId},
       'alerta-item':{eyebrow:'Alerta', title:'Decisão do gestor', back:'balanco/'+route.auditId+'/alerta'},
-      autorizar:{eyebrow:'Autorização', title:'Encerrar balanço', back:'balanco/'+route.auditId},
-      'novo-item':{eyebrow:'Balanço', title:'Adicionar item', back:'balanco/'+route.auditId},
-      'itens-todos':{eyebrow:'Balanço', title:'Todos os itens', back:'balanco/'+route.auditId}
+      autorizar:{eyebrow:'Autorização', title:'Encerrar inventário', back:'balanco/'+route.auditId},
+      'novo-item':{eyebrow:'Inventário', title:'Adicionar item', back:'balanco/'+route.auditId},
+      'itens-todos':{eyebrow:'Inventário', title:'Todos os itens', back:'balanco/'+route.auditId}
     };
     var t = titleMap[route.name] || {eyebrow:'',title:''};
     topbar.innerHTML =
@@ -965,7 +967,7 @@ function updateChrome(route){
   if(isRoot){
     var items = [
       {r:'home', ic:'home', label:'Início'},
-      {r:'balancos', ic:'clipboard', label:'Balanços'},
+      {r:'balancos', ic:'clipboard', label:'Inventários'},
       {fab:true},
       {r:'perfil', ic:'user', label:'Perfil'}
     ];
@@ -1004,13 +1006,8 @@ function screenHome(){
       '<button class="btn primary block" data-action="nav" data-route="novo-balanco" style="margin-top:4px;">Começar auditoria</button>';
   }
 
-  function progressScore(a){
-    var stageIdx = STAGE_ORDER.indexOf(stageOf(a));
-    var pct = a.totalItens ? (a.resolvidos||0)/a.totalItens : 0;
-    return stageIdx + pct; // estágio mais avançado pesa mais; % resolvido desempata dentro do mesmo estágio
-  }
   var atual = ativos.slice().sort(function(x,y){
-    var diff = progressScore(y) - progressScore(x);
+    var diff = (y.resolvidos||0) - (x.resolvidos||0);
     if(diff) return diff;
     return (y.criadoEm||'').localeCompare(x.criadoEm||'');
   })[0];
@@ -1091,7 +1088,7 @@ function screenBalancos(){
   var filtered = list.filter(function(a){ return auditPassesStageFilter(a, filter); });
 
   return stageFilterChipsHtml(filter, 'filterBalancos') +
-    (filtered.length ? filtered.map(auditListItem).join('') : emptyState('clipboard','Nada por aqui', 'Nenhum balanço encontrado com esse filtro.'));
+    (filtered.length ? filtered.map(auditListItem).join('') : emptyState('clipboard','Nada por aqui', 'Nenhum inventário encontrado com esse filtro.'));
 }
 
 function screenNovoBalanco(){
@@ -1100,7 +1097,7 @@ function screenNovoBalanco(){
     '<form data-form="novo-balanco">'+
       nbExternalCardHtml()+
       '<div class="card" style="margin-top:12px;">'+
-        field('nome','Nome do balanço','text','Ex.: Balanço Geral — Depósito Central', true)+
+        field('nome','Nome do inventário','text','Ex.: Inventário Geral — Depósito Central', true)+
         field('local','Local / filial','text','Ex.: Depósito Central - Zona Norte', true)+
         field('responsavel','Responsável','text', null, true, esc(profile.nome))+
         field('tolerancia','Tolerância de divergência (%)','number','2', true)+
@@ -1113,7 +1110,7 @@ function screenNovoBalanco(){
         '<button type="button" class="btn outline block" data-action="nbScanTrigger">'+ic('scan',16)+' Escanear</button>'+
       '</div>'+
       '<button type="button" class="btn secondary block" data-action="nbPrint" style="margin-top:10px;">'+ic('download',16)+' Imprimir modelo em branco</button>'+
-      '<button class="btn primary block" type="submit" style="margin-top:16px;">Criar balanço</button>'+
+      '<button class="btn primary block" type="submit" style="margin-top:16px;">Criar inventário</button>'+
     '</form>';
 }
 
@@ -1166,7 +1163,7 @@ function field(name,label,type,placeholder,required,value){
     '<input class="input" id="f-'+name+'" name="'+name+'" type="'+type+'" placeholder="'+esc(placeholder||'')+'"'+(required?' required':'')+(value!=null?' value="'+esc(value)+'"':'')+(type==='number'?' inputmode="decimal"':'')+'></div>';
 }
 
-function auditNotFound(){ return emptyState('alert','Balanço não encontrado','Ele pode ter sido removido. Volte para a lista de balanços.'); }
+function auditNotFound(){ return emptyState('alert','Inventário não encontrado','Ele pode ter sido removido. Volte para a lista de inventários.'); }
 
 function stageTracker(audit){
   var stage = stageOf(audit);
@@ -1208,7 +1205,7 @@ function screenAuditDetail(auditId){
     authBlock = '<div class="card" style="margin-top:12px;'+(stage==='encerrado'?'':'border-color:var(--color-ink);')+'">'+
       '<div style="display:flex;align-items:center;gap:12px;">'+
         '<div class="icon-wrap" style="background:'+(stage==='encerrado'?'var(--color-canvas)':'var(--color-ink)')+';color:'+(stage==='encerrado'?'var(--color-ink-soft)':'var(--color-on-ink)')+';">'+ic('shield',18)+'</div>'+
-        '<div style="flex:1;"><div style="font-weight:600;font-size:14px;">'+(stage==='encerrado'?'Balanço encerrado':'Pronto para autorização')+'</div>'+
+        '<div style="flex:1;"><div style="font-weight:600;font-size:14px;">'+(stage==='encerrado'?'Inventário encerrado':'Pronto para autorização')+'</div>'+
         '<div style="font-size:12px;color:var(--color-mid-gray);margin-top:2px;">'+(stage==='encerrado'?('Autorizado por '+esc(a.autorizadoPor)+' em '+fmtDateOnly(a.autorizadoEm)):'Todos os itens foram contados e resolvidos.')+'</div></div>'+
       '</div>'+
       (stage!=='encerrado' ? '<button class="btn primary block" data-action="nav" data-route="balanco/'+esc(auditId)+'/autorizar" style="margin-top:14px;">Revisar e autorizar</button>' : '')+
@@ -1216,7 +1213,11 @@ function screenAuditDetail(auditId){
   }
 
   var manageBlock = canRole('gerenciar',profile.papel) && stage!=='encerrado' ? (
-    '<button class="btn outline block" data-action="nav" data-route="balanco/'+esc(auditId)+'/novo-item" style="margin-top:12px;">'+ic('plus',16)+' Adicionar item ao balanço</button>'
+    '<button class="btn outline block" data-action="nav" data-route="balanco/'+esc(auditId)+'/novo-item" style="margin-top:12px;">'+ic('plus',16)+' Adicionar item ao inventário</button>'
+  ) : '';
+
+  var deleteBlock = canRole('excluir',profile.papel) ? (
+    '<button class="btn danger block" data-action="deleteBalanco" data-id="'+esc(auditId)+'" data-nome="'+esc(a.nome)+'" style="margin-top:12px;">'+ic('trash',16)+' Excluir inventário</button>'
   ) : '';
 
   return ''+
@@ -1232,7 +1233,8 @@ function screenAuditDetail(auditId){
     '<div class="section-title">Etapas do fluxo</div>'+
     rowsHtml+
     manageBlock+
-    '<button class="btn outline block" data-action="nav" data-route="balanco/'+esc(auditId)+'/itens" style="margin-top:12px;">Ver todos os '+fmtNum(a.totalItens||0)+' itens</button>';
+    '<button class="btn outline block" data-action="nav" data-route="balanco/'+esc(auditId)+'/itens" style="margin-top:12px;">Ver todos os '+fmtNum(a.totalItens||0)+' itens</button>'+
+    deleteBlock;
 }
 
 function itemStatusBadge(status){
@@ -1252,7 +1254,7 @@ function screenColetarLista(auditId){
   if(!canRole('coletar',profile.papel)){
     var b1 = '<div class="banner">'+ic('shield',18)+'<div>Esta etapa é normalmente feita pelo papel <strong>Operador de Coleta</strong>. Você pode continuar como '+esc(ROLES[profile.papel].short)+' para fins de teste.</div></div>';
   }
-  if(!items.length) return emptyState('checkcircle','Tudo contado','Não há itens pendentes de contagem neste balanço.');
+  if(!items.length) return emptyState('checkcircle','Tudo contado','Não há itens pendentes de contagem neste inventário.');
   return (b1||'') + items.map(function(it){
     return '<div class="list-item" data-action="nav" data-route="balanco/'+esc(auditId)+'/coletar/'+esc(it.sku)+'">'+
       '<div class="icon-wrap">'+ic('package',18)+'</div>'+
@@ -1362,7 +1364,7 @@ function screenValidacaoLista(auditId){
 function screenAlertaLista(auditId){
   var a = audits[auditId]; if(!a) return auditNotFound();
   var items = Object.values(itemsByAudit[auditId]||{}).filter(function(i){ return i.status==='alerta_gestor'; });
-  if(!items.length) return emptyState('checkcircle','Nenhum alerta','Nenhum item atingiu 3 contagens sem convergir neste balanço.');
+  if(!items.length) return emptyState('checkcircle','Nenhum alerta','Nenhum item atingiu 3 contagens sem convergir neste inventário.');
   var banner = '<div class="banner ember">'+ic('alert',18)+'<div>'+items.length+' item(ns) atingiram '+MAX_CONTAGENS+' contagens sem convergir com o sistema. É necessária a decisão do <strong>Gestor</strong>.</div></div>';
   return banner + items.map(function(it){
     var diff = it.qtdContada - it.qtdSistema;
@@ -1414,7 +1416,7 @@ function screenAutorizar(auditId){
   if(a.autorizadoEm){
     return '<div class="card"><div style="display:flex;align-items:center;gap:12px;">'+
       '<div class="icon-wrap" style="background:var(--color-ink);color:var(--color-on-ink);">'+ic('checkcircle',20)+'</div>'+
-      '<div><div style="font-weight:600;">Balanço encerrado</div><div class="li-sub">Autorizado por '+esc(a.autorizadoPor)+' em '+fmtDateOnly(a.autorizadoEm)+'</div></div>'+
+      '<div><div style="font-weight:600;">Inventário encerrado</div><div class="li-sub">Autorizado por '+esc(a.autorizadoPor)+' em '+fmtDateOnly(a.autorizadoEm)+'</div></div>'+
     '</div></div>';
   }
   if(!a.prontoParaAutorizacao){
@@ -1424,7 +1426,7 @@ function screenAutorizar(auditId){
   return ''+
     '<div class="card">'+
       '<div class="stat-grid">'+
-        statBlock('Total de itens', a.totalItens||0, 'contados no balanço')+
+        statBlock('Total de itens', a.totalItens||0, 'contados no inventário')+
         statBlock('Ajustes', ajustados.length, 'itens com estoque corrigido')+
       '</div>'+
     '</div>'+
@@ -1436,8 +1438,8 @@ function screenAutorizar(auditId){
     '</div>' : '')+
     (canAuth ?
       '<form data-form="autorizar" data-audit="'+esc(auditId)+'" style="margin-top:14px;">'+
-        '<div class="card">'+field('obs','Observação de encerramento (opcional)','textarea','Ex.: balanço concluído sem pendências relevantes.')+'</div>'+
-        '<button class="btn primary block" type="submit" style="margin-top:14px;">'+ic('shield',16)+' Autorizar e encerrar balanço</button>'+
+        '<div class="card">'+field('obs','Observação de encerramento (opcional)','textarea','Ex.: inventário concluído sem pendências relevantes.')+'</div>'+
+        '<button class="btn primary block" type="submit" style="margin-top:14px;">'+ic('shield',16)+' Autorizar e encerrar inventário</button>'+
       '</form>'
       : '<div class="banner ember" style="margin-top:14px;">'+ic('alert',18)+'<div>Somente o papel <strong>Gestor</strong> pode autorizar o encerramento. Troque seu papel em Perfil para testar esta ação.</div></div>'
     );
@@ -1453,7 +1455,7 @@ function screenNovoItem(auditId){
       field('localizacao','Localização','text','Ex.: Corredor 4 - Prateleira B2', true)+
       field('qtdSistema','Quantidade no sistema','number','0', true)+
     '</div>'+
-    '<button class="btn primary block" type="submit" style="margin-top:14px;">Adicionar ao balanço</button>'+
+    '<button class="btn primary block" type="submit" style="margin-top:14px;">Adicionar ao inventário</button>'+
   '</form>';
 }
 
@@ -1478,7 +1480,7 @@ function screenFila(){
   if(role==='gestor'){
     var alertas = (itemsQueue.alerta_gestor||[]).filter(function(it){ return passesFilter(it.auditId); });
     var list = Object.values(audits).filter(function(a){ return a.prontoParaAutorizacao && !a.autorizadoEm; }).filter(function(a){ return passesFilter(a.id); });
-    if(!alertas.length && !list.length) return chipsHtml + emptyState('checkcircle','Fila vazia','Nenhum balanço aguardando autorização nem alerta de contagem no momento.');
+    if(!alertas.length && !list.length) return chipsHtml + emptyState('checkcircle','Fila vazia','Nenhum inventário aguardando autorização nem alerta de contagem no momento.');
     var alertasHtml = !alertas.length ? '' : '<div class="section-title">Alertas de contagem (3ª contagem)</div>' + alertas.map(function(it){
       var a = audits[it.auditId];
       var diff = it.qtdContada - it.qtdSistema;
@@ -1547,10 +1549,10 @@ function screenPerfil(){
 }
 
 function screenImportar(){
-  return '<div class="banner">'+ic('download',18)+'<div>Adicione um novo balanço em branco ou importe um balanço de exemplo já preenchido (dados fictícios) para explorar o fluxo completo.</div></div>'+
+  return '<div class="banner">'+ic('download',18)+'<div>Adicione um novo inventário em branco ou importe um inventário de exemplo já preenchido (dados fictícios) para explorar o fluxo completo.</div></div>'+
     '<div class="action-grid" style="grid-template-columns:1fr;">'+
       '<div class="action-card" data-action="nav" data-route="novo-balanco"><div class="ac-icon">'+ic('plus',18)+'</div><div><div class="ac-label">Novo inventário</div><div class="ac-sub">Cadastro manual: local, responsável e itens</div></div></div>'+
-      '<div class="action-card" data-action="importMock"><div class="ac-icon">'+ic('download',18)+'</div><div><div class="ac-label">Importar dados de exemplo</div><div class="ac-sub">Gera um balanço mock salvo de verdade no banco, com itens em todos os estágios (pendente, ok, divergente, conferido, validado e alerta ao gestor)</div></div></div>'+
+      '<div class="action-card" data-action="importMock"><div class="ac-icon">'+ic('download',18)+'</div><div><div class="ac-label">Importar dados de exemplo</div><div class="ac-sub">Gera um inventário mock salvo de verdade no banco, com itens em todos os estágios (pendente, ok, divergente, conferido, validado e alerta ao gestor)</div></div></div>'+
     '</div>';
 }
 
@@ -1580,7 +1582,7 @@ var Forms = {
     }));
 
     resetNBState();
-    toast(total ? 'Balanço criado com '+total+' item(ns).' : 'Balanço criado.');
+    toast(total ? 'Inventário criado com '+total+' item(ns).' : 'Inventário criado.');
     go('balanco/'+id);
   },
   'novo-item': async function(form){
@@ -1595,7 +1597,7 @@ var Forms = {
       qtdContada: null, status:'pendente'
     });
     await recalcAndPersist(auditId);
-    toast('Item adicionado ao balanço.');
+    toast('Item adicionado ao inventário.');
     go('balanco/'+auditId);
   },
   'coletar-item': async function(form){
@@ -1657,7 +1659,7 @@ var Forms = {
     await store.doc('audits/'+auditId).update({
       autorizadoPor: profile.nome, autorizadoEm: new Date().toISOString(), observacaoEncerramento: fd.get('obs')||''
     });
-    toast('Balanço encerrado e ajustes autorizados.');
+    toast('Inventário encerrado e ajustes autorizados.');
     go('balanco/'+auditId);
   },
   'perfil': async function(form){
@@ -1814,7 +1816,7 @@ var Actions = {
     var total = chosen.length;
     // 1) cria o balanço primeiro (satisfaz a FK antes de qualquer item existir)
     await store.doc('audits/'+id).set({
-      nome:'Balanço Mock '+ new Date().toLocaleDateString('pt-BR'),
+      nome:'Inventário Mock '+ new Date().toLocaleDateString('pt-BR'),
       local: pick(MOCK_LOCAIS), responsavel: quem, criadoEm: nowIso, tolerancia: 3,
       totalItens: total, pendentes: pendentes, divergentes: divergentes, aguardandoValidacao: aguardandoValidacao,
       alertasGestor: alertasGestor, resolvidos: resolvidos, prontoParaAutorizacao: total>0 && resolvidos===total
@@ -1823,7 +1825,7 @@ var Actions = {
     await Promise.all(itemsData.map(function(data){
       return store.collection('items').doc(id+'__'+data.sku).set(data);
     }));
-    toast('Balanço de exemplo importado com '+total+' itens em todos os estágios.');
+    toast('Inventário de exemplo importado com '+total+' itens em todos os estágios.');
     go('balanco/'+id);
   },
   nbAddRow: function(){
@@ -1886,6 +1888,17 @@ var Actions = {
       render();
       toast('Conectado a '+nome+'. Itens importados para revisão.');
     }, 1800);
+  },
+  deleteBalanco: async function(ds){
+    var id = ds.id;
+    var ok = confirm('Excluir o inventário "'+ds.nome+'"? Essa ação não pode ser desfeita e vai apagar todos os itens registrados nele.');
+    if(!ok) return;
+    var store = await storeReady;
+    var snap = await store.collection('items').where('auditId','==',id).get();
+    await Promise.all(snap.docs.map(function(d){ return store.doc('items/'+d.id).delete(); }));
+    await store.doc('audits/'+id).delete();
+    toast('Inventário excluído.');
+    go('balancos');
   }
 };
 
