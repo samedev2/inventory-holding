@@ -1004,11 +1004,14 @@ function screenHome(){
       '<button class="btn primary block" data-action="nav" data-route="novo-balanco" style="margin-top:4px;">Começar auditoria</button>';
   }
 
+  function progressScore(a){
+    var stageIdx = STAGE_ORDER.indexOf(stageOf(a));
+    var pct = a.totalItens ? (a.resolvidos||0)/a.totalItens : 0;
+    return stageIdx + pct; // estágio mais avançado pesa mais; % resolvido desempata dentro do mesmo estágio
+  }
   var atual = ativos.slice().sort(function(x,y){
-    var stX=stageOf(x), stY=stageOf(y);
-    var pX = (stX==='autorizacao'||stX==='validacao') ? 0 : 1;
-    var pY = (stY==='autorizacao'||stY==='validacao') ? 0 : 1;
-    if(pX!==pY) return pX-pY;
+    var diff = progressScore(y) - progressScore(x);
+    if(diff) return diff;
     return (y.criadoEm||'').localeCompare(x.criadoEm||'');
   })[0];
   var pct = atual.totalItens ? Math.round(((atual.resolvidos||0)/atual.totalItens)*100) : 0;
