@@ -94,14 +94,17 @@ h1,h2,h3,p{margin:0;}
 .screen{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:4px 16px 24px;}
 .screen-pad-top{padding-top:8px;}
 
-/* Bottom nav: fixed globally — only .screen (the body/content area) scrolls */
+/* Bottom nav: fixed globally — only .screen (the body/content area) scrolls.
+   The FAB is absolutely centered so it stays in the middle regardless of how
+   many nav items end up on each side (e.g. after removing/adding a tab). */
 .bottom-nav{
-  flex:none;z-index:20;
+  flex:none;z-index:20;position:relative;
   background:var(--color-paper);
   box-shadow:0 -1px 0 var(--color-hairline), 0 -8px 20px rgba(16,18,23,.05);
   display:flex;align-items:flex-start;
   padding:10px 6px calc(8px + env(safe-area-inset-bottom));
 }
+.nav-side{flex:1;display:flex;align-items:flex-start;}
 .nav-item{
   flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;
   background:none;border:none;padding:4px 2px;color:var(--color-mid-gray);cursor:pointer;position:relative;
@@ -111,18 +114,18 @@ h1,h2,h3,p{margin:0;}
 .nav-item.active{color:var(--color-ink);}
 .nav-item .active-dot{width:4px;height:4px;border-radius:50%;background:var(--color-ink);margin-top:1px;opacity:0;}
 .nav-item.active .active-dot{opacity:1;}
-.nav-slot{flex:1;display:flex;justify-content:center;}
 .nav-badge{
   position:absolute;top:-3px;right:-9px;background:var(--color-ember);color:#fff;
   font-size:10px;font-weight:600;min-width:15px;height:15px;border-radius:8px;
   display:flex;align-items:center;justify-content:center;padding:0 3px;
 }
 
-/* FAB (center of bottom nav) */
+/* FAB (always centered in the bottom nav) */
 .fab{
+  position:absolute;left:50%;top:-16px;transform:translateX(-50%);
   width:52px;height:52px;border-radius:50%;background:var(--brand-mark-bg);color:var(--brand-mark-fg);
   border:3px solid var(--color-paper);display:flex;align-items:center;justify-content:center;cursor:pointer;
-  box-shadow:var(--shadow-fab);margin-top:-26px;flex:none;
+  box-shadow:var(--shadow-fab);
 }
 .fab:active{opacity:.85;}
 
@@ -973,20 +976,24 @@ function updateChrome(route){
   }
 
   if(isRoot){
-    var items = [
+    var navItems = [
       {r:'home', ic:'home', label:'Início'},
-      {r:'balancos', ic:'clipboard', label:'Inventários'},
-      {fab:true},
+      {r:'balancos', ic:'clipboard', label:'Inventários'}
+    ];
+    var navItemsRight = [
       {r:'perfil', ic:'user', label:'Perfil'}
     ];
-    bottomnav.hidden = false;
-    bottomnav.innerHTML = items.map(function(it){
-      if(it.fab) return '<div class="nav-slot"><button class="fab" data-action="nav" data-route="importar" aria-label="Adicionar ou importar dados">'+ic('plus',24)+'</button></div>';
+    function navItemHtml(it){
       var active = route.name===it.r;
       return '<button class="nav-item'+(active?' active':'')+'" data-action="nav" data-route="'+it.r+'">'+
         '<span class="nav-icon">'+ic(it.ic,22)+(it.badge?'<span class="nav-badge">'+it.badge+'</span>':'')+'</span>'+
         '<span>'+it.label+'</span><span class="active-dot"></span></button>';
-    }).join('');
+    }
+    bottomnav.hidden = false;
+    bottomnav.innerHTML =
+      '<div class="nav-side">'+navItems.map(navItemHtml).join('')+'</div>'+
+      '<button class="fab" data-action="nav" data-route="importar" aria-label="Adicionar ou importar dados">'+ic('plus',24)+'</button>'+
+      '<div class="nav-side">'+navItemsRight.map(navItemHtml).join('')+'</div>';
   } else {
     bottomnav.hidden = true;
     bottomnav.innerHTML = '';
