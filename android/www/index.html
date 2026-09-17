@@ -6,9 +6,11 @@
 <meta name="theme-color" content="#0a0a0b">
 </head>
 <body>
+<meta charset="UTF-8">
 <title>InventoryHolding</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
 :root{
   --color-canvas:#f2f3f6;
@@ -28,45 +30,12 @@
   --shadow-card: 0 1px 2px rgba(16,18,23,.04), 0 8px 20px rgba(16,18,23,.07);
   --shadow-fab: 0 10px 22px rgba(16,18,23,.30);
 }
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
-    --color-canvas:#0a0a0b;
-    --color-paper:#18191d;
-    --color-surface-alt:#141416;
-    --color-ink:#fafafa;
-    --color-ink-soft:#e5e5e5;
-    --color-mid-gray:#a3a3a3;
-    --color-hairline:#2a2b30;
-    --color-ember:#ff5459;
-    --color-ember-bg:#2a1416;
-    --color-ember-border:#4a2226;
-    --color-backdrop:#000000;
-    --color-on-ink:#0a0a0a;
-    --shadow-card: 0 1px 2px rgba(0,0,0,.4), 0 8px 20px rgba(0,0,0,.45);
-    --shadow-fab: 0 10px 22px rgba(0,0,0,.5);
-  }
-}
-:root[data-theme="dark"]{
-  --color-canvas:#0a0a0b;
-  --color-paper:#18191d;
-  --color-surface-alt:#141416;
-  --color-ink:#fafafa;
-  --color-ink-soft:#e5e5e5;
-  --color-mid-gray:#a3a3a3;
-  --color-hairline:#2a2b30;
-  --color-ember:#ff5459;
-  --color-ember-bg:#2a1416;
-  --color-ember-border:#4a2226;
-  --color-backdrop:#000000;
-  --color-on-ink:#0a0a0a;
-  --shadow-card: 0 1px 2px rgba(0,0,0,.4), 0 8px 20px rgba(0,0,0,.45);
-  --shadow-fab: 0 10px 22px rgba(0,0,0,.5);
-}
+/* Tema fixo: light (o app não acompanha o tema escuro do sistema). */
 @media (prefers-reduced-motion: reduce){
   *{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;}
 }
 *{box-sizing:border-box;}
-html,body{margin:0;padding:0;}
+html,body{margin:0;padding:0;height:100%;overflow:hidden;}
 body{
   background:var(--color-backdrop);
   font-family:'Inter',ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
@@ -80,20 +49,20 @@ h1,h2,h3,p{margin:0;}
 .app-shell{
   max-width:480px;
   margin-inline:auto;
-  min-height:100vh;
+  height:100vh;
   background:var(--color-canvas);
   display:flex;
   flex-direction:column;
   position:relative;
-  overflow-x:hidden;
+  overflow:hidden;
 }
 @media (min-width:481px){
   .app-shell{box-shadow:0 0 0 1px var(--color-hairline), 0 12px 48px rgba(0,0,0,.12);}
 }
 
-/* Topbar */
+/* Topbar: fixed globally, same as bottom-nav — only .screen scrolls */
 .topbar{
-  position:sticky;top:0;z-index:20;
+  flex:none;z-index:20;
   background:var(--color-canvas);
   padding:14px 16px 12px;
   display:flex;align-items:center;gap:10px;
@@ -122,12 +91,12 @@ h1,h2,h3,p{margin:0;}
 .bell-btn .nav-badge{top:-4px;right:-4px;}
 
 /* Screen */
-.screen{flex:1;padding:4px 16px 100px;}
+.screen{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:4px 16px 24px;}
 .screen-pad-top{padding-top:8px;}
 
-/* Bottom nav */
+/* Bottom nav: fixed globally — only .screen (the body/content area) scrolls */
 .bottom-nav{
-  position:sticky;bottom:0;z-index:20;
+  flex:none;z-index:20;
   background:var(--color-paper);
   box-shadow:0 -1px 0 var(--color-hairline), 0 -8px 20px rgba(16,18,23,.05);
   display:flex;align-items:flex-start;
@@ -257,6 +226,19 @@ h1,h2,h3,p{margin:0;}
 .action-card .ac-label{font-size:14px;font-weight:700;color:var(--color-ink);}
 .action-card .ac-sub{font-size:12px;color:var(--color-mid-gray);margin-top:-6px;}
 
+/* Bloco de notas (novo balanço) */
+.nb-row{display:flex;align-items:center;gap:8px;}
+.nb-row .input{padding:9px 12px;font-size:13px;}
+.nb-row .nb-qty{width:76px;text-align:right;flex:none;}
+.nb-row .nb-remove{background:none;border:none;color:var(--color-mid-gray);cursor:pointer;flex:none;padding:6px;display:flex;}
+.nb-connect-anim{display:flex;align-items:center;justify-content:center;gap:12px;}
+.nb-node{width:44px;height:44px;border-radius:50%;background:var(--brand-mark-bg);color:var(--brand-mark-fg);display:flex;align-items:center;justify-content:center;flex:none;box-shadow:var(--shadow-fab);}
+.nb-connect-line{display:flex;gap:5px;align-items:center;}
+.nb-connect-line span{width:7px;height:7px;border-radius:50%;background:var(--color-ember);opacity:.25;animation:nbPulse 1.1s ease-in-out infinite;}
+.nb-connect-line span:nth-child(2){animation-delay:.15s;}
+.nb-connect-line span:nth-child(3){animation-delay:.3s;}
+@keyframes nbPulse{0%,100%{opacity:.25;transform:scale(.8);}50%{opacity:1;transform:scale(1.15);}}
+
 /* Stage tracker */
 .stage-track{display:flex;gap:6px;margin:2px 0 4px;}
 .stage-step{flex:1;height:5px;border-radius:3px;background:var(--color-hairline);}
@@ -332,7 +314,8 @@ h1,h2,h3,p{margin:0;}
 
 /* Login */
 .login-screen{
-  flex:1;display:flex;flex-direction:column;justify-content:center;gap:0;
+  flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  display:flex;flex-direction:column;justify-content:center;gap:0;
   padding:32px 24px calc(32px + env(safe-area-inset-bottom));background:var(--color-canvas);
 }
 .login-brand{display:flex;flex-direction:column;align-items:center;gap:14px;margin-bottom:32px;}
@@ -678,6 +661,16 @@ var MOCK_LOCAIS = ['Depósito Demonstração', 'Filial Norte - Amostra', 'Galpã
 function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
 function randInt(min,max){ return Math.floor(min + Math.random()*(max-min+1)); }
 
+/* ---------------- Novo balanço: bloco de notas + inventário externo (mock) ---------------- */
+var GRANJA_MOCK_ITEMS = [
+  {nome:'Paletes', quantidade:120}, {nome:'Bebedouro', quantidade:48}, {nome:'Comedouro', quantidade:48},
+  {nome:'Rações', quantidade:300}, {nome:'Exaustores', quantidade:12}, {nome:'Ovos Estocados', quantidade:5400},
+  {nome:'Placas Evaporativas', quantidade:18}, {nome:'Farelo de Soja', quantidade:85}, {nome:'Ninhos', quantidade:200}
+];
+var NB_STATE = { itens:[{nome:'',quantidade:''}], externo:null, externoNome:'', conectando:false, scanning:false, tokenGerado:null };
+function resetNBState(){ NB_STATE = { itens:[{nome:'',quantidade:''}], externo:null, externoNome:'', conectando:false, scanning:false, tokenGerado:null }; }
+function genMockToken(){ return 'tok_live_'+Date.now().toString(36)+Math.random().toString(36).slice(2,10); }
+
 /* ---------------- Local fallback store (used only if db capability is unavailable) ---------------- */
 function createLocalDB(){
   var KEY='balanco-certo:localdb:v1';
@@ -982,7 +975,6 @@ function updateChrome(route){
       {r:'home', ic:'home', label:'Início'},
       {r:'balancos', ic:'clipboard', label:'Balanços'},
       {fab:true},
-      {r:'fila', ic:'inbox', label:'Fila', badge:qCount},
       {r:'perfil', ic:'user', label:'Perfil'}
     ];
     bottomnav.hidden = false;
@@ -1009,58 +1001,53 @@ function queueCountForRole(){
 }
 
 /* ---------------- Screens ---------------- */
+/* Home minimalista: só o essencial — a auditoria que está rolando
+   agora, sem jargão nem números técnicos. Alertas (divergência, 3ª
+   contagem) ficam concentrados na aba Fila, não aqui. */
 function screenHome(){
-  var list = Object.values(audits);
-  var ativos = list.filter(function(a){ return !a.autorizadoEm; });
-  var totalPendentes=0, totalDivergentes=0, totalAguardandoVal=0, totalAguardandoAut=0, totalAlertas=0;
-  list.forEach(function(a){
-    if(a.autorizadoEm) return;
-    totalPendentes += a.pendentes||0;
-    totalDivergentes += a.divergentes||0;
-    totalAguardandoVal += a.aguardandoValidacao||0;
-    totalAlertas += a.alertasGestor||0;
-    if(a.prontoParaAutorizacao) totalAguardandoAut++;
-  });
+  var ativos = Object.values(audits).filter(function(a){ return !a.autorizadoEm; });
 
-  var roleInfo = ROLES[profile.papel];
-  var banner = '<div class="banner">'+ic('shield',18)+'<div>Você está atuando como <strong>'+esc(roleInfo.label)+'</strong>. '+esc(roleInfo.desc)+'</div></div>';
+  if(!ativos.length){
+    return emptyState('package','Nenhuma auditoria em andamento','Toque abaixo para começar uma nova auditoria de inventário.')+
+      '<button class="btn primary block" data-action="nav" data-route="novo-balanco" style="margin-top:4px;">Começar auditoria</button>';
+  }
 
-  var recentHtml = ativos.slice(0,4).map(auditListItem).join('') || emptyState('package','Nenhum balanço ativo','Toque em Balanços para ver o histórico completo.');
-
-  var gestorBanner = totalAlertas>0 ? (
-    '<div class="alert-banner" data-action="nav" data-route="fila"><span class="ab-icon">'+ic('alert',20)+'</span>'+
-      '<span class="ab-count">'+totalAlertas+'</span>'+
-      '<span class="ab-text">'+(totalAlertas===1?'item chegou a 3 contagens — decisão do gestor':'itens chegaram a 3 contagens — decisão do gestor')+'</span>'+
-      '<span class="ab-chev">'+ic('chevright',18)+'</span>'+
-    '</div>'
-  ) : '';
-
-  var alertBanner = totalDivergentes>0 ? (
-    '<div class="alert-banner" data-action="nav" data-route="balancos"><span class="ab-icon">'+ic('alert',20)+'</span>'+
-      '<span class="ab-count">'+totalDivergentes+'</span>'+
-      '<span class="ab-text">'+(totalDivergentes===1?'item com divergência aguardando conferência':'itens com divergência aguardando conferência')+'</span>'+
-      '<span class="ab-chev">'+ic('chevright',18)+'</span>'+
-    '</div>'
-  ) : '';
-
-  var actionGrid = '<div class="action-grid">'+
-    '<div class="action-card" data-action="nav" data-route="fila"><div class="ac-icon">'+ic('inbox',18)+'</div><div><div class="ac-label">Minha fila</div><div class="ac-sub">'+fmtNum(queueCountForRole())+' aguardando você</div></div></div>'+
-    '<div class="action-card" data-action="nav" data-route="balancos"><div class="ac-icon">'+ic('clipboard',18)+'</div><div><div class="ac-label">Balanços</div><div class="ac-sub">'+fmtNum(ativos.length)+' ativos</div></div></div>'+
-  '</div>';
+  var atual = ativos.slice().sort(function(x,y){
+    var stX=stageOf(x), stY=stageOf(y);
+    var pX = (stX==='autorizacao'||stX==='validacao') ? 0 : 1;
+    var pY = (stY==='autorizacao'||stY==='validacao') ? 0 : 1;
+    if(pX!==pY) return pX-pY;
+    return (y.criadoEm||'').localeCompare(x.criadoEm||'');
+  })[0];
+  var pct = atual.totalItens ? Math.round(((atual.resolvidos||0)/atual.totalItens)*100) : 0;
+  var stage = stageOf(atual);
+  var badgeClass = stage==='encerrado' ? 'solid' : (stage==='conferencia' ? 'ember' : 'soft');
+  var restantes = Math.max(0, (atual.totalItens||0) - (atual.resolvidos||0));
 
   return ''+
-    gestorBanner+
-    alertBanner+
-    actionGrid+
-    '<div class="stat-grid">'+
-      statBlock('Em coleta', totalPendentes, 'itens pendentes') +
-      statBlock('Divergências', totalDivergentes, 'aguardando conferência') +
-      statBlock('Em validação', totalAguardandoVal, 'aguardando supervisor') +
-      statBlock('Alerta gestor', totalAlertas, '3 contagens sem convergir') +
+    '<div class="section-title" style="margin-top:4px;">Em andamento</div>'+
+    '<div class="card" data-action="nav" data-route="balanco/'+esc(atual.id)+'" style="cursor:pointer;text-align:center;padding:32px 24px;">'+
+      '<span class="badge '+badgeClass+'">'+STAGE_LABEL[stage]+'</span>'+
+      '<div style="font-size:19px;font-weight:700;margin-top:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(atual.nome)+'</div>'+
+      '<div class="li-sub" style="margin-top:2px;">'+ic('building',13)+' '+esc(atual.local)+'</div>'+
+      '<div style="display:flex;justify-content:center;margin:22px 0 18px;">'+ringSvg(pct, 176)+'</div>'+
+      '<div style="font-size:15px;font-weight:600;">'+fmtNum(atual.resolvidos||0)+' de '+fmtNum(atual.totalItens||0)+' itens conferidos</div>'+
+      '<div class="li-sub" style="margin-top:2px;">'+(restantes>0 ? fmtNum(restantes)+' itens restantes' : 'Pronto para revisão')+'</div>'+
+      '<button class="btn primary block" data-action="nav" data-route="balanco/'+esc(atual.id)+'" style="margin-top:24px;">Ver detalhes</button>'+
     '</div>'+
-    banner+
-    '<div class="section-title">Balanços em andamento</div>'+
-    recentHtml;
+    (ativos.length>1 ? '<button class="btn outline block" data-action="nav" data-route="balancos" style="margin-top:12px;">Ver todas ('+ativos.length+')</button>' : '');
+}
+
+function ringSvg(pct, size){
+  size = size || 64;
+  pct = Math.min(100, Math.max(0, pct||0));
+  var r = size/2 - 6, c=2*Math.PI*r, off=c-(c*pct/100), mid=size/2;
+  var fontSize = Math.round(size*0.22);
+  return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 '+size+' '+size+'" style="flex:none;">'+
+    '<circle cx="'+mid+'" cy="'+mid+'" r="'+r+'" fill="none" stroke="var(--color-hairline)" stroke-width="'+Math.max(6,size*0.075)+'"/>'+
+    '<circle cx="'+mid+'" cy="'+mid+'" r="'+r+'" fill="none" stroke="var(--color-ink)" stroke-width="'+Math.max(6,size*0.075)+'" stroke-linecap="round" stroke-dasharray="'+c.toFixed(2)+'" stroke-dashoffset="'+off.toFixed(2)+'" transform="rotate(-90 '+mid+' '+mid+')"/>'+
+    '<text x="'+mid+'" y="'+(mid+fontSize*0.35)+'" text-anchor="middle" font-size="'+fontSize+'" font-weight="700" fill="var(--color-ink)" font-family="Inter,sans-serif">'+pct+'%</text>'+
+  '</svg>';
 }
 
 function statBlock(label, value, sub){
@@ -1087,31 +1074,92 @@ function auditListItem(a){
   '</div>';
 }
 
+var BALANCO_FILTER_GROUPS = {
+  contagem: ['coleta','conferencia'],
+  validacao: ['validacao','autorizacao'],
+  encerrado: ['encerrado']
+};
+var BALANCO_FILTER_CHIPS = [
+  ['todos','Todos'], ['contagem','Em contagem'], ['validacao','Validação'], ['encerrado','Encerrados']
+];
+function stageFilterChipsHtml(current, actionName){
+  return '<div class="chip-row">' + BALANCO_FILTER_CHIPS.map(function(c){
+    return '<button class="chip'+(current===c[0]?' active':'')+'" data-action="'+actionName+'" data-filter="'+c[0]+'">'+c[1]+'</button>';
+  }).join('') + '</div>';
+}
+function auditPassesStageFilter(a, filter){
+  return filter==='todos' || (a && BALANCO_FILTER_GROUPS[filter].indexOf(stageOf(a))!==-1);
+}
 function screenBalancos(){
   var list = Object.values(audits).sort(function(x,y){ return (y.criadoEm||'').localeCompare(x.criadoEm||''); });
   var filter = screenBalancos._filter || 'todos';
-  var chips = [
-    ['todos','Todos'], ['coleta','Em coleta'], ['conferencia','Conferência'],
-    ['validacao','Validação'], ['autorizacao','P/ autorizar'], ['encerrado','Encerrados']
-  ];
-  var filtered = filter==='todos' ? list : list.filter(function(a){ return stageOf(a)===filter; });
+  var filtered = list.filter(function(a){ return auditPassesStageFilter(a, filter); });
 
-  return '<div class="chip-row">' + chips.map(function(c){
-      return '<button class="chip'+(filter===c[0]?' active':'')+'" data-action="filterBalancos" data-filter="'+c[0]+'">'+c[1]+'</button>';
-    }).join('') + '</div>' +
+  return stageFilterChipsHtml(filter, 'filterBalancos') +
     (filtered.length ? filtered.map(auditListItem).join('') : emptyState('clipboard','Nada por aqui', 'Nenhum balanço encontrado com esse filtro.'));
 }
 
 function screenNovoBalanco(){
-  return '<form data-form="novo-balanco">'+
-    '<div class="card">'+
-      field('nome','Nome do balanço','text','Ex.: Balanço Geral — Depósito Central', true)+
-      field('local','Local / filial','text','Ex.: Depósito Central - Zona Norte', true)+
-      field('responsavel','Responsável','text', null, true, esc(profile.nome))+
-      field('tolerancia','Tolerância de divergência (%)','number','2', true)+
-    '</div>'+
-    '<button class="btn primary block" type="submit" style="margin-top:14px;">Criar balanço</button>'+
-  '</form>';
+  var rowsHtml = NB_STATE.itens.map(nbRowHtml).join('');
+  return '<input type="file" accept="image/*" capture="environment" id="nb-scan-input" hidden>'+
+    '<form data-form="novo-balanco">'+
+      nbExternalCardHtml()+
+      '<div class="card" style="margin-top:12px;">'+
+        field('nome','Nome do balanço','text','Ex.: Balanço Geral — Depósito Central', true)+
+        field('local','Local / filial','text','Ex.: Depósito Central - Zona Norte', true)+
+        field('responsavel','Responsável','text', null, true, esc(profile.nome))+
+        field('tolerancia','Tolerância de divergência (%)','number','2', true)+
+      '</div>'+
+      '<div class="section-title">Bloco de notas do inventário</div>'+
+      '<div class="banner">'+ic('shield',18)+'<div>Anote o nome e a quantidade de cada item — digitando, escaneando um documento preenchido, ou puxando do inventário externo acima.'+(NB_STATE.scanning?' <strong>Lendo documento…</strong>':'')+'</div></div>'+
+      rowsHtml+
+      '<div class="btn-row" style="margin-top:10px;">'+
+        '<button type="button" class="btn outline block" data-action="nbAddRow">'+ic('plus',16)+' Item</button>'+
+        '<button type="button" class="btn outline block" data-action="nbScanTrigger">'+ic('scan',16)+' Escanear</button>'+
+      '</div>'+
+      '<button type="button" class="btn secondary block" data-action="nbPrint" style="margin-top:10px;">'+ic('download',16)+' Imprimir modelo em branco</button>'+
+      '<button class="btn primary block" type="submit" style="margin-top:16px;">Criar balanço</button>'+
+    '</form>';
+}
+
+function nbRowHtml(it, idx){
+  return '<div class="list-item nb-row" style="cursor:default;">'+
+    '<input class="input" data-nb-field="nome" data-nb-idx="'+idx+'" value="'+esc(it.nome)+'" placeholder="Nome do item">'+
+    '<input class="input nb-qty" type="number" inputmode="numeric" data-nb-field="quantidade" data-nb-idx="'+idx+'" value="'+esc(it.quantidade)+'" placeholder="Qtd.">'+
+    '<button type="button" class="nb-remove" data-action="nbRemoveRow" data-idx="'+idx+'" aria-label="Remover item">'+ic('x',16)+'</button>'+
+  '</div>';
+}
+
+function nbExternalCardHtml(){
+  if(NB_STATE.conectando){
+    return '<div class="card" style="text-align:center;padding:30px 20px;">'+
+      '<div class="nb-connect-anim">'+
+        '<div class="nb-node">'+ic('shield',20)+'</div>'+
+        '<div class="nb-connect-line"><span></span><span></span><span></span></div>'+
+        '<div class="nb-node">'+ic('building',20)+'</div>'+
+      '</div>'+
+      '<div style="margin-top:16px;font-size:13px;color:var(--color-mid-gray);">Conectando a '+esc(NB_STATE.externoNome||'Granja Norte')+'…</div>'+
+    '</div>';
+  }
+  if(NB_STATE.externo){
+    return '<div class="card" style="display:flex;align-items:center;gap:12px;">'+
+      '<div class="icon-wrap" style="background:var(--color-ink);color:var(--color-on-ink);">'+ic('checkcircle',18)+'</div>'+
+      '<div style="flex:1;"><div style="font-weight:600;font-size:14px;">Conectado a '+esc(NB_STATE.externo)+'</div><div class="li-sub">Itens importados do inventário externo (demonstração) — revise abaixo</div></div>'+
+    '</div>';
+  }
+  var tokenBlock = NB_STATE.tokenGerado ?
+    '<div class="field"><label class="field-label">Token de acesso (API)</label>'+
+      '<div style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:var(--color-surface-alt);border:1px solid var(--color-hairline);border-radius:12px;padding:10px 12px;word-break:break-all;">'+esc(NB_STATE.tokenGerado)+'</div>'+
+      '<div class="li-sub" style="margin-top:4px;">Gerado agora — usado para autenticar com o sistema externo (demonstração).</div>'+
+    '</div>' :
+    '<button type="button" class="btn outline block" data-action="nbGenToken">'+ic('shield',16)+' Gerar token de acesso</button>';
+  return '<div class="card">'+
+    '<div style="font-weight:600;font-size:14px;">Inventário externo</div>'+
+    '<div class="li-sub" style="margin-top:2px;margin-bottom:14px;">Puxe os itens direto de outro sistema em vez de digitar tudo. Conexão de demonstração — nenhum sistema real é acessado ainda.</div>'+
+    field('sistemaExterno','Nome do sistema','text','Ex.: Granja Norte', false)+
+    tokenBlock+
+    '<button type="button" class="btn outline block" data-action="nbConnectExternal" style="margin-top:12px;'+(NB_STATE.tokenGerado?'':'opacity:.45;pointer-events:none;')+'">'+ic('scan',16)+' Conectar inventário externo</button>'+
+  '</div>';
 }
 
 function field(name,label,type,placeholder,required,value){
@@ -1428,10 +1476,14 @@ function screenItensTodos(auditId){
 
 function screenFila(){
   var role = profile.papel;
+  var filter = screenFila._filter || 'todos';
+  var chipsHtml = stageFilterChipsHtml(filter, 'filterFila');
+  function passesFilter(auditId){ return auditPassesStageFilter(audits[auditId], filter); }
+
   if(role==='gestor'){
-    var alertas = itemsQueue.alerta_gestor||[];
-    var list = Object.values(audits).filter(function(a){ return a.prontoParaAutorizacao && !a.autorizadoEm; });
-    if(!alertas.length && !list.length) return emptyState('checkcircle','Fila vazia','Nenhum balanço aguardando autorização nem alerta de contagem no momento.');
+    var alertas = (itemsQueue.alerta_gestor||[]).filter(function(it){ return passesFilter(it.auditId); });
+    var list = Object.values(audits).filter(function(a){ return a.prontoParaAutorizacao && !a.autorizadoEm; }).filter(function(a){ return passesFilter(a.id); });
+    if(!alertas.length && !list.length) return chipsHtml + emptyState('checkcircle','Fila vazia','Nenhum balanço aguardando autorização nem alerta de contagem no momento.');
     var alertasHtml = !alertas.length ? '' : '<div class="section-title">Alertas de contagem (3ª contagem)</div>' + alertas.map(function(it){
       var a = audits[it.auditId];
       var diff = it.qtdContada - it.qtdSistema;
@@ -1442,13 +1494,13 @@ function screenFila(){
       '</div>';
     }).join('');
     var autorizarHtml = !list.length ? '' : '<div class="section-title">Aguardando autorização</div>' + list.map(auditListItem).join('');
-    return alertasHtml + autorizarHtml;
+    return chipsHtml + alertasHtml + autorizarHtml;
   }
   var st = role==='conferente' ? 'divergente' : role==='supervisor' ? 'conferido' : 'pendente';
   var routeSeg = role==='conferente' ? 'conferencia' : role==='supervisor' ? 'validacao' : 'coletar';
-  var items = itemsQueue[st]||[];
-  if(!items.length) return emptyState('checkcircle','Fila vazia', 'Nenhum item aguardando '+(role==='conferente'?'conferência':role==='supervisor'?'validação':'coleta')+' no momento.');
-  return '<div class="section-title">'+items.length+' item(ns) aguardando você</div>' + items.map(function(it){
+  var items = (itemsQueue[st]||[]).filter(function(it){ return passesFilter(it.auditId); });
+  if(!items.length) return chipsHtml + emptyState('checkcircle','Fila vazia', 'Nenhum item aguardando '+(role==='conferente'?'conferência':role==='supervisor'?'validação':'coleta')+' no momento.');
+  return chipsHtml + '<div class="section-title">'+items.length+' item(ns) aguardando você</div>' + items.map(function(it){
     var a = audits[it.auditId];
     return '<div class="list-item" data-action="nav" data-route="balanco/'+esc(it.auditId)+'/'+routeSeg+(st==='pendente'?'/'+esc(it.sku):'/'+esc(it.sku))+'">'+
       '<div class="icon-wrap">'+ic(role==='conferente'?'alert':role==='supervisor'?'shield':'package',18)+'</div>'+
@@ -1502,7 +1554,7 @@ function screenPerfil(){
 function screenImportar(){
   return '<div class="banner">'+ic('download',18)+'<div>Adicione um novo balanço em branco ou importe um balanço de exemplo já preenchido (dados fictícios) para explorar o fluxo completo.</div></div>'+
     '<div class="action-grid" style="grid-template-columns:1fr;">'+
-      '<div class="action-card" data-action="nav" data-route="novo-balanco"><div class="ac-icon">'+ic('plus',18)+'</div><div><div class="ac-label">Novo balanço</div><div class="ac-sub">Cadastro manual: local, responsável e itens</div></div></div>'+
+      '<div class="action-card" data-action="nav" data-route="novo-balanco"><div class="ac-icon">'+ic('plus',18)+'</div><div><div class="ac-label">Novo inventário</div><div class="ac-sub">Cadastro manual: local, responsável e itens</div></div></div>'+
       '<div class="action-card" data-action="importMock"><div class="ac-icon">'+ic('download',18)+'</div><div><div class="ac-label">Importar dados de exemplo</div><div class="ac-sub">Gera um balanço mock salvo de verdade no banco, com itens em todos os estágios (pendente, ok, divergente, conferido, validado e alerta ao gestor)</div></div></div>'+
     '</div>';
 }
@@ -1513,12 +1565,27 @@ var Forms = {
     var fd = new FormData(form);
     var id = 'bal-' + uid();
     var store = await storeReady;
+    var validos = NB_STATE.itens.filter(function(it){ return it.nome && it.nome.trim(); });
+    var total = validos.length;
+
+    // 1) balanço primeiro — os itens têm FK pra ele no Postgres
     await store.doc('audits/'+id).set({
       nome: fd.get('nome'), local: fd.get('local'), responsavel: fd.get('responsavel'),
       tolerancia: Number(fd.get('tolerancia'))||0, criadoEm: new Date().toISOString(),
-      totalItens:0, pendentes:0, divergentes:0, aguardandoValidacao:0, resolvidos:0, prontoParaAutorizacao:false
+      totalItens: total, pendentes: total, divergentes:0, aguardandoValidacao:0, alertasGestor:0,
+      resolvidos:0, prontoParaAutorizacao:false
     });
-    toast('Balanço criado.');
+    // 2) itens do bloco de notas
+    await Promise.all(validos.map(function(it, idx){
+      var sku = 'ITEM-'+(idx+1)+'-'+uid().slice(-4).toUpperCase();
+      return store.collection('items').doc(id+'__'+sku).set({
+        auditId:id, sku:sku, descricao: it.nome.trim(), categoria: NB_STATE.externo||'', localizacao:'',
+        qtdSistema: Number(it.quantidade)||0, unidade:'un', qtdContada:null, status:'pendente', numContagens:0, contagens:[]
+      });
+    }));
+
+    resetNBState();
+    toast(total ? 'Balanço criado com '+total+' item(ns).' : 'Balanço criado.');
     go('balanco/'+id);
   },
   'novo-item': async function(form){
@@ -1661,8 +1728,9 @@ async function loadSupabaseProfile(client, user, empresa){
 }
 
 var Actions = {
-  nav: function(ds){ go(ds.route); },
+  nav: function(ds){ if(ds.route==='novo-balanco') resetNBState(); go(ds.route); },
   filterBalancos: function(ds){ screenBalancos._filter = ds.filter; render(); },
+  filterFila: function(ds){ screenFila._filter = ds.filter; render(); },
   fillDemo: function(ds){
     var emailEl = document.getElementById('f-email');
     if(emailEl) emailEl.value = ds.email;
@@ -1762,6 +1830,67 @@ var Actions = {
     }));
     toast('Balanço de exemplo importado com '+total+' itens em todos os estágios.');
     go('balanco/'+id);
+  },
+  nbAddRow: function(){
+    NB_STATE.itens.push({nome:'',quantidade:''});
+    render();
+  },
+  nbRemoveRow: function(ds){
+    var idx = Number(ds.idx);
+    NB_STATE.itens.splice(idx,1);
+    if(!NB_STATE.itens.length) NB_STATE.itens.push({nome:'',quantidade:''});
+    render();
+  },
+  nbScanTrigger: function(){
+    var input = document.getElementById('nb-scan-input');
+    if(input) input.click();
+  },
+  nbPrint: function(){
+    var rows = '';
+    for(var i=0;i<20;i++){ rows += '<tr><td></td><td></td></tr>'; }
+    var html = '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">'+
+      '<title>Bloco de notas do inventário</title>'+
+      '<style>'+
+        'body{font-family:Arial,Helvetica,sans-serif;padding:24px;color:#111;}'+
+        'h1{font-size:18px;margin:0 0 4px;}'+
+        'p{font-size:12px;color:#555;margin:0 0 18px;}'+
+        'table{width:100%;border-collapse:collapse;}'+
+        'th,td{border:1px solid #999;padding:10px 8px;text-align:left;font-size:13px;}'+
+        'th{background:#eee;}'+
+        'td{height:26px;}'+
+        'td:last-child{width:120px;}'+
+      '</style></head><body>'+
+      '<h1>Bloco de notas do inventário</h1>'+
+      '<p>Preencha nome e quantidade de cada item. Depois, tire uma foto ou escaneie este documento no app InventoryHolding.</p>'+
+      '<table><thead><tr><th>Item</th><th>Quantidade</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+      '</body></html>';
+    var w = window.open('', '_blank');
+    if(!w){ toast('Não foi possível abrir a janela de impressão.'); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+    w.focus();
+    setTimeout(function(){ try{ w.print(); }catch(e){} }, 300);
+  },
+  nbGenToken: function(){
+    var nomeEl = document.getElementById('f-sistemaExterno');
+    if(nomeEl) NB_STATE.externoNome = nomeEl.value.trim();
+    NB_STATE.tokenGerado = genMockToken();
+    render();
+    toast('Token de acesso gerado.');
+  },
+  nbConnectExternal: function(){
+    var nomeEl = document.getElementById('f-sistemaExterno');
+    var nome = (nomeEl && nomeEl.value.trim()) || 'Granja Norte';
+    if(!NB_STATE.tokenGerado){ toast('Gere um token de acesso antes de conectar.'); return; }
+    NB_STATE.conectando = true;
+    NB_STATE.externoNome = nome;
+    render();
+    setTimeout(function(){
+      NB_STATE.conectando = false;
+      NB_STATE.externo = nome;
+      NB_STATE.itens = GRANJA_MOCK_ITEMS.map(function(it){ return { nome: it.nome, quantidade: it.quantidade }; });
+      render();
+      toast('Conectado a '+nome+'. Itens importados para revisão.');
+    }, 1800);
   }
 };
 
@@ -1784,6 +1913,59 @@ document.addEventListener('submit', function(e){
     Promise.resolve(fn(form, submitter)).catch(function(err){ console.error(err); toast('Não foi possível salvar. Tente novamente.'); });
   }
 });
+
+document.addEventListener('input', function(e){
+  var el = e.target.closest('[data-nb-field]');
+  if(!el) return;
+  var idx = Number(el.dataset.nbIdx);
+  var it = NB_STATE.itens[idx];
+  if(!it) return;
+  it[el.dataset.nbField] = el.value;
+});
+
+document.addEventListener('change', function(e){
+  if(e.target.id === 'nb-scan-input'){
+    var file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if(file) runOcrScan(file);
+  }
+});
+
+function runOcrScan(file){
+  if(typeof Tesseract === 'undefined'){ toast('OCR indisponível no momento.'); return; }
+  NB_STATE.scanning = true;
+  render();
+  Tesseract.recognize(file, 'por')
+    .then(function(result){
+      var text = (result && result.data && result.data.text) || '';
+      var lines = text.split('\n');
+      var found = [];
+      lines.forEach(function(line){
+        var m = line.trim().match(/^(.+?)\s+(\d+)\s*$/);
+        if(m){
+          var nome = m[1].replace(/[.:_-]+$/,'').trim();
+          var qtd = m[2];
+          if(nome) found.push({ nome: nome, quantidade: qtd });
+        }
+      });
+      if(!found.length){
+        toast('Não reconhecemos itens no documento. Tente digitar manualmente.');
+      } else {
+        var blanks = NB_STATE.itens.filter(function(it){ return !it.nome && !it.quantidade; }).length;
+        if(blanks === NB_STATE.itens.length) NB_STATE.itens = [];
+        NB_STATE.itens = NB_STATE.itens.concat(found);
+        toast(found.length+' item(ns) reconhecidos. Confira antes de salvar.');
+      }
+    })
+    .catch(function(err){
+      console.error(err);
+      toast('Não foi possível ler o documento. Tente novamente ou digite manualmente.');
+    })
+    .finally(function(){
+      NB_STATE.scanning = false;
+      render();
+    });
+}
 
 /* ---------------- Main render ---------------- */
 var SCREENS = {

@@ -83,6 +83,14 @@ a divergência (segue para validação do supervisor) ou solicitar recontagem. S
 o item é escalado automaticamente para **Alerta ao Gestor** — somente o papel Gestor pode registrar a decisão
 final nesse caso (ajuste, quebra, furto etc.).
 
+## Auditor de inventário externo (demo)
+
+Na tela "Novo balanço", o gestor pode registrar os itens digitando à mão, escaneando um documento (OCR real via
+Tesseract.js, sempre com revisão manual antes de salvar) ou "conectando" a um inventário externo (ex.: Granja
+Norte). Essa conexão — geração de token, animação de handshake e importação dos itens — é **inteiramente mock**:
+não existe integração real com nenhum sistema externo agora. Serve para demonstrar o fluxo a sócios/interessados;
+o token gerado não autentica nada de verdade e os itens importados vêm de uma lista fixa de exemplo.
+
 ## Licença
 
 Uso interno / demonstração.
