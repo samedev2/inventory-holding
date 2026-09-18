@@ -428,7 +428,8 @@ function ic(name, size){
     scan:'<path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M20 8V6a2 2 0 0 0-2-2h-2"/><path d="M4 16v2a2 2 0 0 0 2 2h2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/><path d="M4 12h16"/>',
     download:'<path d="M12 4v11.5M7.5 11l4.5 4.5L16.5 11"/><path d="M5 19.5h14"/>',
     lock:'<rect x="5.5" y="10.5" width="13" height="9.5" rx="2.5"/><path d="M8.3 10.5V7.8a3.7 3.7 0 1 1 7.4 0v2.7"/>',
-    trash:'<path d="M5 7.5h14"/><path d="M9.5 7.5V5.3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2.2"/><path d="M7 7.5 7.8 19a1.5 1.5 0 0 0 1.5 1.4h5.4A1.5 1.5 0 0 0 16.2 19l.8-11.5"/><path d="M10.3 11v6.2M13.7 11v6.2"/>'
+    trash:'<path d="M5 7.5h14"/><path d="M9.5 7.5V5.3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2.2"/><path d="M7 7.5 7.8 19a1.5 1.5 0 0 0 1.5 1.4h5.4A1.5 1.5 0 0 0 16.2 19l.8-11.5"/><path d="M10.3 11v6.2M13.7 11v6.2"/>',
+    attach:'<path d="M17.5 8.2 9.9 15.8a3 3 0 0 1-4.2-4.2l8.1-8.1a2 2 0 0 1 2.8 2.8l-7.6 7.6a1 1 0 0 1-1.4-1.4l6.9-6.9"/>'
   };
   return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">'+(p[name]||'')+'</svg>';
 }
@@ -989,11 +990,13 @@ function updateChrome(route){
         '<span class="nav-icon">'+ic(it.ic,22)+(it.badge?'<span class="nav-badge">'+it.badge+'</span>':'')+'</span>'+
         '<span>'+it.label+'</span><span class="active-dot"></span></button>';
     }
+    var docShortcutHtml = '<button class="nav-item" data-action="novoInventarioDocumento" aria-label="Novo inventário por documento">'+
+      '<span class="nav-icon">'+ic('attach',22)+'</span><span>Anexar</span><span class="active-dot"></span></button>';
     bottomnav.hidden = false;
     bottomnav.innerHTML =
       '<div class="nav-side">'+navItems.map(navItemHtml).join('')+'</div>'+
       '<button class="fab" data-action="nav" data-route="importar" aria-label="Adicionar ou importar dados">'+ic('plus',24)+'</button>'+
-      '<div class="nav-side">'+navItemsRight.map(navItemHtml).join('')+'</div>';
+      '<div class="nav-side">'+docShortcutHtml+navItemsRight.map(navItemHtml).join('')+'</div>';
   } else {
     bottomnav.hidden = true;
     bottomnav.innerHTML = '';
@@ -1741,6 +1744,14 @@ async function loadSupabaseProfile(client, user, empresa){
 
 var Actions = {
   nav: function(ds){ if(ds.route==='novo-balanco') resetNBState(); go(ds.route); },
+  novoInventarioDocumento: function(){
+    resetNBState();
+    go('novo-balanco');
+    setTimeout(function(){
+      var input = document.getElementById('nb-scan-input');
+      if(input) input.click();
+    }, 50);
+  },
   filterBalancos: function(ds){ screenBalancos._filter = ds.filter; render(); },
   filterFila: function(ds){ screenFila._filter = ds.filter; render(); },
   fillDemo: function(ds){
